@@ -1,0 +1,126 @@
+:root {
+  --apple-bg: rgba(28, 28, 30, 0.75);
+  --apple-border: rgba(255, 255, 255, 0.15);
+  --apple-blue: #0A84FF;
+  --apple-red: #FF453A;
+  --apple-green: #32D74B;
+  --apple-orange: #FF9F0A;
+  --text-main: #FFFFFF;
+  --text-sub: #EBEBF599;
+  --sat: env(safe-area-inset-top, 10px);
+  --sab: env(safe-area-inset-bottom, 20px);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', -apple-system, sans-serif; }
+body, html { width: 100%; height: 100%; overflow: hidden; background: #121212; user-select: none; }
+
+/* Harita Alanı (Bozuk invert filtresi kaldırıldı) */
+#map { 
+  position: fixed; 
+  inset: 0; 
+  width: 100vw; 
+  height: 100vh; 
+  z-index: 1; 
+  background: #121212; 
+}
+.leaflet-control-attribution, .leaflet-control-zoom { display: none !important; }
+
+/* GPS Mavi Nokta ve Pulse Efekti */
+.user-marker { position: relative; }
+.blue-dot {
+  width: 22px; height: 22px;
+  background-color: var(--apple-blue);
+  border: 3.5px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 15px rgba(10, 132, 255, 0.6);
+  z-index: 2; position: absolute; top: -11px; left: -11px;
+}
+.pulse-halo {
+  width: 60px; height: 60px;
+  background-color: rgba(10, 132, 255, 0.25);
+  border-radius: 50%;
+  position: absolute; top: -30px; left: -30px;
+  animation: pulse 2s infinite ease-out; z-index: 1;
+}
+@keyframes pulse {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* Yüzen Apple UI */
+#app-ui {
+  position: fixed; inset: 0; z-index: 10; pointer-events: none;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: calc(var(--sat) + 15px) 15px calc(var(--sab) + 15px) 15px;
+}
+
+.glass-panel, .glass-btn {
+  pointer-events: auto; background: var(--apple-bg);
+  backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+  border: 1px solid var(--apple-border); color: var(--text-main);
+}
+
+.top-bar { display: flex; justify-content: space-between; align-items: flex-start; }
+.speed-limit-box {
+  width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  border: 3px solid var(--apple-red); background: #fff; color: #000;
+  font-weight: 700; font-size: 18px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: opacity 0.3s;
+}
+.speed-limit-box.off { opacity: 0; pointer-events: none; }
+.top-right { display: flex; gap: 10px; flex-direction: column; }
+.glass-btn {
+  width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: transform 0.2s, background 0.2s;
+}
+.glass-btn:active { transform: scale(0.9); }
+.glass-btn svg { width: 22px; height: 22px; }
+
+.toast-container { display: flex; justify-content: center; margin-top: 10px; pointer-events: none; }
+.toast {
+  padding: 10px 20px; border-radius: 20px; display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; animation: slideDown 0.3s ease;
+}
+@keyframes slideDown { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.toast.info { background: rgba(10, 132, 255, 0.85); border-color: var(--apple-blue); }
+.toast.warn { background: rgba(255, 159, 10, 0.85); border-color: var(--apple-orange); }
+.toast.danger { background: rgba(255, 69, 58, 0.85); border-color: var(--apple-red); }
+
+.bottom-controls { display: flex; justify-content: space-between; align-items: flex-end; pointer-events: none; }
+.speed-card {
+  pointer-events: auto; padding: 15px 25px; border-radius: 24px;
+  display: flex; flex-direction: column; align-items: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4); cursor: pointer; transition: 0.3s;
+}
+.speed-card.active { background: rgba(10, 132, 255, 0.15); border-color: var(--apple-blue); }
+.speed-val { font-size: 48px; font-weight: 700; line-height: 1; letter-spacing: -2px; }
+.speed-unit { font-size: 14px; color: var(--text-sub); margin-left: 4px; font-weight: 500; }
+.speed-status { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--apple-blue); margin-top: 5px; font-weight: 700; }
+.speed-card.active .speed-status { color: var(--apple-green); }
+
+.action-buttons { display: flex; flex-direction: column; gap: 12px; pointer-events: auto; }
+.danger-btn { background: rgba(255, 69, 58, 0.15); color: var(--apple-red); }
+.loc-btn { background: rgba(10, 132, 255, 0.15); color: var(--apple-blue); }
+
+#sheet-bg { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0); display: none; align-items: flex-end; transition: 0.3s; }
+#sheet-bg.open { display: flex; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); }
+#sheet { width: 100%; background: #1c1c1e; border-radius: 20px 20px 0 0; padding: 20px; transform: translateY(100%); transition: 0.4s cubic-bezier(0.32, 0.72, 0, 1); color: #fff; }
+#sheet.open { transform: translateY(0); }
+.m-title { font-size: 20px; font-weight: 700; margin-bottom: 20px; }
+.m-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.mr-name { font-size: 16px; font-weight: 500; }
+.mr-desc { font-size: 12px; color: var(--text-sub); }
+.m-save { width: 100%; padding: 15px; border-radius: 12px; background: var(--apple-blue); color: #fff; font-weight: 600; border: none; margin-top: 20px; font-size: 16px; cursor: pointer; }
+
+.sw { position: relative; width: 50px; height: 30px; }
+.sw input { opacity: 0; width: 0; height: 0; }
+.sw-t { position: absolute; inset: 0; border-radius: 15px; background: #39393d; cursor: pointer; transition: 0.3s; }
+.sw-t::after { content: ''; position: absolute; left: 2px; top: 2px; width: 26px; height: 26px; border-radius: 50%; background: #fff; transition: 0.3s; }
+.sw input:checked + .sw-t { background: var(--apple-green); }
+.sw input:checked + .sw-t::after { transform: translateX(20px); }
+
+.hz-marker {
+  width: 34px; height: 34px; background: var(--apple-red); border-radius: 50%;
+  border: 3px solid #fff; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.5); color: #fff;
+}
+.hz-marker svg { width: 18px; height: 18px; }
