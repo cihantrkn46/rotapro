@@ -1,0 +1,29 @@
+{
+  "name": "RotaPro – Sürücü Asistanı",
+  "short_name": "RotaPro",
+  "description": "Profesyonel mobil sürücü asistanı – hız limiti uyarıları, navigasyon ve yol güvenliği.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "/rotapro",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#08090d",
+  "theme_color": "#08090d",
+  "lang": "tr",
+  "dir": "ltr",
+  "categories": ["navigation", "travel", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Sürüşü Başlat",
+      "short_name": "Başlat",
+      "url": "./index.html?autostart=1",
+      "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
+}
