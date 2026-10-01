@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#1c1c1e">
+<meta name="description" content="RotaPro Sürücü Asistanı">
+<meta name="apple-mobile-web-app-title" content="RotaPro">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>RotaPro</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<!-- Inter Font (Apple SF Pro alternatifi) -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Tam Ekran Harita -->
+<div id="map"></div>
+<div id="ovr" aria-hidden="true"></div>
+
+<!-- Yüzen UI (Floating Apple Style) -->
+<div id="app-ui">
+  <!-- Üst Kısım -->
+  <div class="top-bar">
+    <div class="glass-panel speed-limit-box" id="limit-badge">
+      <span id="limit-num">--</span>
+    </div>
+    <div class="top-right">
+      <button class="glass-btn" id="btn-install" style="display: none;" aria-label="Ana Ekrana Ekle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-3 3m0 0l-3-3m3 3V4"/></svg>
+      </button>
+      <button class="glass-btn" id="btn-cfg" aria-label="Ayarlar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Üst Orta Bilgi Balonu (Hava/Durum/Uyarı) -->
+  <div class="toast-container" id="toast-container">
+    <div class="glass-panel toast" id="tip" style="display:none;">
+      <span id="tip-icon"></span>
+      <span id="tip-t">Durum Bilgisi</span>
+    </div>
+  </div>
+
+  <!-- Alt Kontroller -->
+  <div class="bottom-controls">
+    <!-- Hız Göstergesi (Minimal Apple Kartı) -->
+    <div class="glass-panel speed-card" id="btn-go">
+      <div class="speed-val"><span id="spd-val">0</span><span class="speed-unit">km/s</span></div>
+      <div class="speed-status" id="go-lbl">Sürüşü Başlat</div>
+    </div>
+
+    <div class="action-buttons">
+      <!-- Tehlike Rozet Bırakma Butonu -->
+      <button class="glass-btn danger-btn" id="btn-hz" aria-label="Tehlike Bildir">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      </button>
+      <!-- Konum Bulma Butonu -->
+      <button class="glass-btn loc-btn" id="btn-loc" aria-label="Konumuma Git">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0z"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Ayarlar Bottom Sheet -->
+<div id="sheet-bg">
+  <div id="sheet">
+    <div class="m-handle-area"><div class="m-handle"></div></div>
+    <div class="m-content">
+      <div class="m-title">Ayarlar</div>
+      <div class="m-row">
+        <div class="mr-info">
+          <div class="mr-name">Harita Yönü (Pusula)</div>
+          <div class="mr-desc">Haritayı gidiş yönüne döndürür</div>
+        </div>
+        <label class="sw"><input type="checkbox" id="o-rotate" checked><span class="sw-t"></span></label>
+      </div>
+      <div class="m-row">
+        <div class="mr-info">
+          <div class="mr-name">Sesli Uyarı</div>
+          <div class="mr-desc">Hız limiti ve rozet yaklaşımlarında uyarır</div>
+        </div>
+        <label class="sw"><input type="checkbox" id="o-sound" checked><span class="sw-t"></span></label>
+      </div>
+      <button class="m-save" id="btn-save">Tamam</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="app.js"></script>
+</body>
+</html>
