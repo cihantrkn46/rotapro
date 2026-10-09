@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RotaPro</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="ui-container">
+        <div class="search-box">
+            <input type="text" id="destination" placeholder="Nereye gitmek istiyorsunuz?">
+            <button id="routeBtn">Rota Çiz</button>
+        </div>
+        
+        <div class="controls">
+            <button id="locateBtn" class="action-btn">Konumumu Bul</button>
+            <button id="clearBtn" class="action-btn clear">Temizle</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="app.js?v=10.0"></script>
+    <script>
+        // Service Worker Kaydı (PWA için)
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('Service Worker başarıyla kaydedildi.', reg))
+                    .catch(err => console.error('Service Worker hatası:', err));
+            });
+        }
+    </script>
+</body>
+</html>

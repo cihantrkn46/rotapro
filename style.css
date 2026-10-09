@@ -1,0 +1,100 @@
+* { 
+    box-sizing: border-box; 
+    margin: 0; 
+    padding: 0; 
+}
+
+body, html { 
+    width: 100%; 
+    height: 100%; 
+    overflow: hidden; 
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+}
+
+#map { 
+    width: 100%; 
+    height: 100vh; 
+    z-index: 1; 
+}
+
+.ui-container {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+    max-width: 400px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    will-change: transform;
+}
+
+.search-box {
+    display: flex;
+    gap: 8px;
+    background: white;
+    padding: 10px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15);
+}
+
+input {
+    flex: 1;
+    padding: 12px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 16px;
+    outline: none;
+}
+
+button {
+    padding: 12px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+    touch-action: manipulation;
+}
+
+#routeBtn { 
+    background: #007bff; 
+    color: white; 
+}
+
+#routeBtn:active { 
+    background: #0056b3; 
+}
+
+.controls { 
+    display: flex; 
+    gap: 10px; 
+}
+
+.action-btn { 
+    flex: 1; 
+    background: white; 
+    color: #333; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.15); 
+}
+
+.action-btn:active { 
+    background: #f0f0f0; 
+}
+
+.clear { 
+    color: #dc3545; 
+}
+
+/* Konum İkonu Stili */
+.custom-user-icon div {
+    background-color: #007bff;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 3px solid white;
+    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+}
