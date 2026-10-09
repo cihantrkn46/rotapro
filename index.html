@@ -28,7 +28,6 @@
 <link rel="dns-prefetch" href="https://overpass.private.coffee">
 <link rel="dns-prefetch" href="https://api.open-meteo.com">
 <link rel="dns-prefetch" href="https://nominatim.openstreetmap.org">
-<link rel="dns-prefetch" href="https://ntfy.sh">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 
 <link rel="stylesheet" href="style.css">
@@ -242,22 +241,20 @@
       <div class="m-section">Yol Katmanları</div>
       <div class="m-row"><div class="mr-info"><div class="mr-name">Trafik Işıkları</div><div class="mr-desc">Haritada sinyalli kavşakları gösterir (OSM)</div></div>
         <label class="sw"><input type="checkbox" id="o-lights" checked><span class="sw-t"></span></label></div>
-      <div class="m-row"><div class="mr-info"><div class="mr-name">Radar ve Uyarı Noktaları</div><div class="mr-desc">Hız kamerası, kasis, dur levhası, hemzemin geçit</div></div>
+      <div class="m-row"><div class="mr-info"><div class="mr-name">Radar ve Uyarı Noktaları</div><div class="mr-desc">Hız kamerası ve radar noktaları</div></div>
         <label class="sw"><input type="checkbox" id="o-cams" checked><span class="sw-t"></span></label></div>
-      <div class="m-row"><div class="mr-info"><div class="mr-name">Yol Çalışmaları ve Kapanmalar</div><div class="mr-desc">OSM inşaat alanları ve kapatılmış yollar</div></div>
-        <label class="sw"><input type="checkbox" id="o-works" checked><span class="sw-t"></span></label></div>
-      <div class="m-row"><div class="mr-info"><div class="mr-name">Topluluk İşaretleri</div><div class="mr-desc">Diğer sürücülerin bildirdiği tehlikeleri göster, sen de paylaş</div></div>
-        <label class="sw"><input type="checkbox" id="o-community" checked><span class="sw-t"></span></label></div>
+      <div class="m-row"><div class="mr-info"><div class="mr-name">Yol Çalışmaları</div><div class="mr-desc">OSM inşaat alanları</div></div>
+        <label class="sw"><input type="checkbox" id="o-works"><span class="sw-t"></span></label></div>
       <div class="m-input-row">
-        <p class="m-hint">💡 RotaPro tamamen <b>API anahtarsızdır</b>. Harita: OpenStreetMap · Hava: Open-Meteo · Adres: Nominatim · Yol: Overpass · Topluluk: ntfy.sh · Ses: Yerleşik Web Speech</p>
+        <p class="m-hint">💡 RotaPro tamamen <b>API anahtarsızdır</b>. Harita: OpenStreetMap · Hava: Open-Meteo · Adres: Nominatim · Yol: Overpass · Ses: Yerleşik Web Speech</p>
       </div>
 
       <div class="m-section">Sistem Durumu</div>
       <div class="m-row"><div class="mr-info"><div class="mr-name">Yol Hız Sınırları</div><div class="mr-desc">OpenStreetMap yol veritabanı</div></div><span class="m-status" id="st-lim">Bekliyor</span></div>
       <div class="m-row"><div class="mr-info"><div class="mr-name">Meteoroloji Servisi</div><div class="mr-desc">Open-Meteo anlık hava + yol durumu</div></div><span class="m-status" id="st-wx">Bekliyor</span></div>
-      <div class="m-row"><div class="mr-info"><div class="mr-name">Yol Çalışmaları ve POI</div><div class="mr-desc">OSM üzerinden ışık, kamera, kasis, inşaat</div></div><span class="m-status" id="st-trf">Bekliyor</span></div>
+      <div class="m-row"><div class="mr-info"><div class="mr-name">Yol Çalışmaları ve POI</div><div class="mr-desc">OSM üzerinden ışık, kamera, inşaat</div></div><span class="m-status" id="st-trf">Bekliyor</span></div>
       <div class="m-row"><div class="mr-info"><div class="mr-name">Coğrafi Çözümleme</div><div class="mr-desc">Koordinat - Adres çevrim motoru</div></div><span class="m-status" id="st-geo">Bekliyor</span></div>
-      <p class="m-credit">Harita verileri © OpenStreetMap katkıda bulunanları · Hava durumu: Open-Meteo · Adres: Nominatim · Rota: OSRM · Topluluk: ntfy.sh</p>
+      <p class="m-credit">Harita verileri © OpenStreetMap katkıda bulunanları · Hava durumu: Open-Meteo · Adres: Nominatim · Rota: OSRM</p>
       <p class="m-credit" style="text-align:center;margin-top:18px;letter-spacing:2px;font-weight:700;color:var(--text-secondary)">GELİŞTİRİCİ · MCT YAZILIM</p>
 
       <button class="m-save" id="btn-save">Uygula ve Kapat</button>
