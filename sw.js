@@ -1,6 +1,6 @@
-const CACHE_NAME = 'rotapro-v13-cache';
+const CACHE_NAME = 'rotapro-v14-cache';
 const ASSETS = ['./','./index.html','./app.js','./style.css','./manifest.json','./icon-192.png','./icon-512.png','./icon-maskable-512.png','./apple-touch-icon.png'];
-const SKIP = ['tile.openstreetmap.org','overpass-api.de','open-meteo.com','nominatim.openstreetmap.org'];
+const SKIP = ['tile.openstreetmap.org','overpass-api.de','open-meteo.com','nominatim.openstreetmap.org','project-osrm.org'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE_NAME).then(c => Promise.all(ASSETS.map(a => c.add(a).catch(() => {})))));
