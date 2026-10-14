@@ -18,17 +18,7 @@
     { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    {
-      "name": "Hedef Seç",
-      "short_name": "Hedef",
-      "url": "./index.html?action=dest",
-      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
-    },
-    {
-      "name": "Ayarlar",
-      "short_name": "Ayarlar",
-      "url": "./index.html?action=settings",
-      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
-    }
+    { "name": "Hedef Seç", "short_name": "Hedef", "url": "./index.html?action=dest", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
+    { "name": "Ayarlar", "short_name": "Ayarlar", "url": "./index.html?action=settings", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
   ]
 }
