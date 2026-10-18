@@ -21,7 +21,7 @@ Tek sayfalık, **bağımlılığı yalnızca Leaflet olan** mobil sürücü asis
 ## Kurulum
 
 ```bash
-git clone https://github.com/KULLANICI_ADIN/rotapro.git
+git clone https://github.com/cihantrkn46/rotapro.git
 cd rotapro
 python3 -m http.server 8000
 ```
