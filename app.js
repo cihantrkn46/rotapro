@@ -1,0 +1,1768 @@
+/**
+ * RotaPro — Complete Mobile Navigation App (Car Integrated Edition)
+ * MCT YAZILIM — 2026 Optimized & Bug-Free
+ */
+'use strict';
+
+const _killSplashNow = () => {
+  try {
+    const s = document.getElementById('splash');
+    if (s && !s.classList.contains('hide')) {
+      s.classList.add('hide');
+      setTimeout(() => { try { s.remove(); } catch (_) {} }, 500);
+    }
+  } catch (_) {}
+};
+
+const _logErr = (src, e) => {
+  try {
+    const a = JSON.parse(localStorage.getItem('rp_errlog') || '[]');
+    a.push({ t: Date.now(), s: src, m: String((e && (e.message || e.reason && e.reason.message || e.reason)) || e).slice(0, 200) });
+    localStorage.setItem('rp_errlog', JSON.stringify(a.slice(-20)));
+  } catch (_) {}
+  try { console.warn('[RotaPro]', src, e); } catch (_) {}
+};
+window.addEventListener('error', e => { _logErr('error', e); setTimeout(_killSplashNow, 50); });
+window.addEventListener('unhandledrejection', e => { _logErr('promise', e); setTimeout(_killSplashNow, 50); });
+setTimeout(_killSplashNow, 6000);
+
+/* ═══════ Utilities ═══════ */
+const $ = id => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch (e) {} },
+  json(k, fb){ try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fb : v; } catch (e) { return fb; } }
+};
+
+async function fetchJSON(url, ms = 7000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ac.signal, headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const OVERPASS_HOSTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+async function fetchOverpass(q, ms = 8000) {
+  let lastErr;
+  for (const h of OVERPASS_HOSTS) {
+    try { return await fetchJSON(h + '?data=' + encodeURIComponent(q), ms); } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+/* ═══════ Config ═══════ */
+class Config {
+  constructor() {
+    this.autoStart = true; this.autoCenter = true; this.rotateMode = true;
+    this.soundOn = true; this.ttsOn = true; this.wakeOn = true;
+    this.lightTheme = false; this.threshold = 10;
+    this.showLights = false; this.showCams = true; this.showWorks = true;
+    this.vehicle = 'benzin'; this.fuelPrice = 45; this.showFuel = true;
+    this.carName = 'Aracım'; this.autoNight = false;
+    this.load();
+  }
+  load() {
+    const s = store.get('rp_cfg_v9');
+    if (!s) return;
+    try {
+      const o = JSON.parse(s);
+      this.autoStart   = o.as !== false;
+      this.autoCenter  = o.ac !== false;
+      this.rotateMode  = o.rot !== false;
+      this.soundOn     = o.snd !== false;
+      this.ttsOn       = o.tts !== false;
+      this.wakeOn      = o.wk  !== false;
+      this.lightTheme  = o.lt === true;
+      this.threshold   = clamp(parseInt(o.thr, 10) || 10, 1, 50);
+      this.showLights  = o.sl === true;
+      this.showCams    = o.sc !== false;
+      this.showWorks   = o.sw === true;
+      this.vehicle     = ['benzin','dizel','lpg','elektrik'].includes(o.vh) ? o.vh : 'benzin';
+      const fp = parseFloat(o.fp);
+      this.fuelPrice   = Number.isFinite(fp) ? Math.max(0, fp) : 45;
+      this.showFuel    = o.sf !== false;
+      this.carName     = o.cn || 'Aracım';
+      this.autoNight   = o.an === true;
+    } catch (e) {}
+  }
+  save(ac, rot, snd, tts, wk, lt, thr, x) {
+    this.autoCenter = ac; this.rotateMode = rot;
+    this.soundOn = snd; this.ttsOn = tts; this.wakeOn = wk;
+    this.lightTheme = lt;
+    this.threshold = clamp(parseInt(thr, 10) || 10, 1, 50);
+    if (x) {
+      this.showLights = !!x.lights;
+      this.showCams    = !!x.cams;
+      this.showWorks   = !!x.works;
+      if (x.autoStart !== undefined) this.autoStart = !!x.autoStart;
+      if (x.vehicle !== undefined) this.vehicle = x.vehicle;
+      if (x.fuelPrice !== undefined) this.fuelPrice = parseFloat(x.fuelPrice) || 0;
+      if (x.showFuel  !== undefined) this.showFuel  = !!x.showFuel;
+      if (x.carName   !== undefined) this.carName   = x.carName.trim() || 'Aracım';
+      if (x.autoNight !== undefined) this.autoNight = !!x.autoNight;
+    }
+    store.set('rp_cfg_v9', JSON.stringify({
+      as: this.autoStart, ac: this.autoCenter, rot: this.rotateMode,
+      snd: this.soundOn, tts: this.ttsOn, wk: this.wakeOn,
+      lt: this.lightTheme, thr: this.threshold,
+      sl: this.showLights, sc: this.showCams, sw: this.showWorks,
+      vh: this.vehicle, fp: this.fuelPrice, sf: this.showFuel, cn: this.carName, an: this.autoNight
+    }));
+  }
+}
+
+/* ═══════ SheetManager ═══════ */
+class SheetManager {
+  constructor(bg = 'sheet-bg', sh = 'sheet', hd = 'sheet-handle', op = 'btn-cfg', cl = 'btn-save') {
+    this.ids = { op, cl, bg, sh };
+    this.bg = $(bg); this.sheet = $(sh); this.handle = $(hd);
+    this.isOpen = false;
+    this.bindEvents();
+  }
+  bindEvents() {
+    const cfgBtn = $(this.ids.op);
+    if (cfgBtn) cfgBtn.addEventListener('click', () => this.open());
+    const saveBtn = $(this.ids.cl);
+    if (saveBtn) saveBtn.addEventListener('click', () => this.close());
+    if (this.bg) this.bg.addEventListener('click', e => { if (e.target === this.bg) this.close(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && this.isOpen) this.close(); });
+    if (this.handle) {
+      let y0 = null;
+      this.handle.addEventListener('touchstart', e => { y0 = e.touches[0].clientY; }, { passive: true });
+      this.handle.addEventListener('touchmove', e => { if (y0 != null && e.touches[0].clientY - y0 > 60) { y0 = null; this.close(); } }, { passive: true });
+      this.handle.addEventListener('click', () => this.close());
+    }
+  }
+  open() {
+    if (!this.bg || !this.sheet) return;
+    this.bg.style.display = 'flex';
+    void this.bg.offsetWidth;
+    this.bg.classList.add('open');
+    this.sheet.classList.add('open');
+    this.isOpen = true;
+  }
+  close() {
+    if (!this.bg || !this.sheet) return;
+    this.sheet.classList.remove('open');
+    this.bg.classList.remove('open');
+    this.isOpen = false;
+    setTimeout(() => { if (!this.isOpen && this.bg) this.bg.style.display = 'none'; }, 300);
+  }
+}
+
+/* ═══════ Geofence & GPS Filter ═══════ */
+function segProj(la, ln, a, b) {
+  const rad = Math.PI / 180, kx = 111320 * Math.cos(la * rad), ky = 110540;
+  const ax = (a[1] - ln) * kx, ay = (a[0] - la) * ky, bx = (b[1] - ln) * kx, by = (b[0] - la) * ky;
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+  let t = L2 ? -(ax * dx + ay * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+  const px = ax + t * dx, py = ay + t * dy;
+  return { d: Math.hypot(px, py), p: [la + py / ky, ln + px / kx], brg: (Math.atan2(dx, dy) / rad + 360) % 360 };
+}
+
+class GPSFilter {
+  constructor() { this.v = -1; }
+  process(la, ln, acc, t, spd) {
+    acc = Math.max(acc, 3);
+    if (this.v < 0 || t - this.t > 20000 || hav(this.la, this.ln, la, ln) > 400 || (this.acc0 > 80 && acc < 30 && hav(this.la, this.ln, la, ln) > 40)) {
+      this.acc0 = acc; this.rej = 0;
+      this.la = la; this.ln = ln; this.v = acc * acc; this.t = t; return [la, ln];
+    }
+    const dt = Math.max(0, (t - this.t) / 1000);
+    const gap = hav(this.la, this.ln, la, ln);
+    if (gap > spd * dt * 1.5 + 3 * acc + 12 && (this.rej || 0) < 2) { this.rej = (this.rej || 0) + 1; this.t = t; return [this.la, this.ln]; }
+    this.rej = 0; this.acc0 = acc;
+    this.v += dt * Math.pow(Math.max(3, spd), 2);
+    this.t = t;
+    const k = this.v / (this.v + acc * acc);
+    this.la += k * (la - this.la); this.ln += k * (ln - this.ln);
+    this.v = (1 - k) * this.v;
+    return [this.la, this.ln];
+  }
+}
+
+/* ═══════ RotaMap ═══════ */
+class RotaMap {
+  constructor(appConfig) {
+    this.cfg = appConfig;
+    if (typeof L === 'undefined') { setTimeout(() => toast('Harita kitaplığı yüklenemedi. Hız ve GPS çalışır; sayfayı yenileyin.', 7000), 1500); return; }
+    try {
+      this.map = L.map('map', {
+        center: (() => { try { return JSON.parse(store.get('rp_last')) || [39.92, 32.85]; } catch (e) { return [39.92, 32.85]; } })(), zoom: 18, zoomControl: false,
+        attributionControl: false, preferCanvas: true
+      });
+
+      this.tl = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        subdomains: 'abc', maxZoom: 19, minZoom: 3, crossOrigin: true, attribution: '', keepBuffer: 3, updateWhenIdle: false, updateWhenZooming: false
+      }).addTo(this.map);
+
+      this.map.on('zoomstart', () => { if (!this._autoFlag) this._userZoomAt = Date.now(); });
+      this.mapRot = $('map-rot');
+      this.pos = null;
+      this._targetHd = 0;
+      this._renderMapAngle = 0;
+      this._renderMarkerAngle = 0;
+      this._hasHd = false;
+      this._prevPos = null;
+      this._lastMoveHdg = null;
+      this._hd = 0;
+
+      this._initMe();
+
+      this.lightsL = L.layerGroup().addTo(this.map);
+      this.camsL   = L.layerGroup().addTo(this.map);
+      this.workL   = L.layerGroup().addTo(this.map);
+      this.destMarkerL = L.layerGroup().addTo(this.map);
+      this.trail = []; this.trailL = L.polyline([], { color: '#4285F4', weight: 5, opacity: 0.35, lineCap: 'round', interactive: false }).addTo(this.map);
+
+      setTimeout(() => { try { this.map.invalidateSize(); } catch (_) {} }, 250);
+      let rt = null; const inv = () => { clearTimeout(rt); rt = setTimeout(() => { try { this.map.invalidateSize(); } catch (_) {} }, 120); };
+      window.addEventListener('resize', inv); window.addEventListener('orientationchange', inv);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') inv(); });
+      this.map.on('dragend', () => { this._dragEnd = Date.now(); });
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  setTheme(light) {
+    document.body.classList.toggle('light-theme', !!light);
+    const mt = document.getElementById('meta-theme');
+    if (mt) mt.setAttribute('content', light ? '#f0f2f5' : '#0a0a0f');
+  }
+
+  _initMe() {
+    this.following = this.cfg.autoCenter;
+    this.disp = null;
+    this.moving = false;
+    this.meEl = null;
+    const icon = L.divIcon({
+      className: 'me-wrap', iconSize: [64, 64], iconAnchor: [32, 32],
+      html: '<div class="me" id="me"><div class="me-halo"></div>' +
+            '<div class="me-rot" id="me-rot"><div class="me-cone"></div>' +
+            '<svg class="me-arrow" viewBox="0 0 26 44"><rect x="3" y="2" width="20" height="40" rx="8" fill="#4285F4" stroke="#fff" stroke-width="2"/><path d="M6.5 14Q13 9.5 19.5 14L18.5 20H7.5Z" fill="#d6e6ff"/><rect x="7.5" y="29" width="11" height="6" rx="2" fill="#2b5fc2"/><circle cx="7.5" cy="5.5" r="1.7" fill="#fff59d"/><circle cx="18.5" cy="5.5" r="1.7" fill="#fff59d"/></svg></div>' +
+            '<div class="me-dot"></div></div>'
+    });
+    this.meMarker = L.marker([39.92, 32.85], { icon, interactive: false, keyboard: false, zIndexOffset: 1000 });
+    this.accCircle = L.circle([39.92, 32.85], {
+      radius: 0, stroke: false, fillColor: '#4285F4', fillOpacity: 0.15, interactive: false
+    });
+    this.btnRecenter = $('btn-recenter');
+    if (this.btnRecenter) this.btnRecenter.addEventListener('click', () => this.follow());
+    this.map.on('dragstart', () => this.unfollow());
+    this._syncRecenter();
+  }
+
+  follow() {
+    this.following = true;
+    if (this.disp) this.map.setView(this.disp, Math.max(this.map.getZoom(), 17), { animate: true });
+    this._syncRecenter();
+  }
+  unfollow() { this.following = false; this._unfT = Date.now(); this._syncRecenter(); }
+  _syncRecenter() {
+    if (this.btnRecenter) {
+      this.btnRecenter.classList.toggle('show', !!this.pos);
+      this.btnRecenter.classList.toggle('following', !!this.following);
+    }
+  }
+
+  _blendHeading(c, a) {
+    if (!this._hasHd) {
+      this._targetHd = (c % 360 + 360) % 360; this._hasHd = true;
+      if (this.meEl) this.meEl.classList.add('has-hd');
+    } else {
+      const diff = ((c - this._targetHd + 540) % 360) - 180;
+      if (Math.abs(diff) < 1.5) return;
+      this._targetHd = ((this._targetHd + diff * a) % 360 + 360) % 360;
+    }
+    this._hd = this._targetHd;
+  }
+
+  snap(la, ln, brg) {
+    this.pos = [la, ln];
+    if (this.accCircle) this.accCircle.setLatLng(this.pos);
+    if (brg != null && this._spd > 1.2) this._blendHeading(brg, 0.45);
+  }
+
+  _autoZoom(kmh) {
+    if (!this.following || !this.moving || document.body.classList.contains('picking')) return;
+    const now = Date.now();
+    if (now - (this._userZoomAt || 0) < 25000 || now - (this._autoZAt || 0) < 8000) return;
+    const z = this.map.getZoom();
+    let t = z;
+    if (z === 18 && kmh > 50) t = 17;
+    else if (z === 17 && kmh > 90) t = 16;
+    else if (z === 17 && kmh < 35) t = 18;
+    else if (z === 16 && kmh < 80) t = 17;
+    if (t !== z) {
+      this._autoZAt = now; this._autoFlag = true;
+      try { this.map.setZoom(t); } finally { this._autoFlag = false; }
+    }
+  }
+
+  pushFix(la, ln, ac, hdg, kmh) {
+    if (this.init && Number.isFinite(ac) && ac > 300) return;
+    if (this.init && this.pos && kmh <= 3 && hav(this.pos[0], this.pos[1], la, ln) < Math.max(6, (Number.isFinite(ac) ? ac : 20) * 0.6)) { la = this.pos[0]; ln = this.pos[1]; }
+    this.pos = [la, ln];
+    this._fixT = Date.now();
+    this._spd = Math.max(0, kmh) / 3.6;
+    if (this.init && this.disp && !this.moving && hav(this.disp[0], this.disp[1], la, ln) > Math.max(60, (Number.isFinite(ac) ? ac : 30) * 2)) {
+      this.disp = [la, ln]; this.meMarker.setLatLng(this.disp);
+    }
+    if (!this.init) {
+      this.init = true;
+      this.disp = [la, ln];
+      this._renderMapAngle = 0; this._hasHd = false; this._renderOff = 0;
+      try { this.map.invalidateSize(false); } catch (_) {}
+      this.meMarker.setLatLng(this.disp).addTo(this.map);
+      this.accCircle.setLatLng(this.disp).addTo(this.map);
+      this.map.setView(this.disp, 18, { animate: false });
+      this.meEl = $('me');
+      setTimeout(() => { try { this.map.invalidateSize(); } catch (_) {} }, 300);
+    }
+    if (Number.isFinite(ac)) this.accCircle.setRadius(Math.min(ac, 120));
+    this.accCircle.setLatLng(this.pos);
+
+    this.moving = kmh > 3;
+    if (this.meEl) this.meEl.classList.toggle('moving', this.moving);
+
+    if (this._prevPos && kmh > 3) {
+      const d = hav(this._prevPos[0], this._prevPos[1], la, ln);
+      if (d >= 2) this._lastMoveHdg = bearingTo(this._prevPos[0], this._prevPos[1], la, ln);
+    }
+    this._prevPos = [la, ln];
+
+    let candidate = null;
+    if (Number.isFinite(hdg) && hdg >= 0 && kmh > 2.5) candidate = hdg;
+    else if (this._lastMoveHdg !== null && kmh > 3) candidate = this._lastMoveHdg;
+    if (candidate !== null && !this._hasHd && kmh < 6) candidate = null;
+    if (candidate !== null) this._blendHeading(candidate, kmh > 25 ? 0.5 : kmh > 8 ? 0.35 : 0.2);
+
+    if (this.moving) {
+      const lt = this.trail[this.trail.length - 1];
+      if (!lt || hav(lt[0], lt[1], la, ln) > 8) { this.trail.push([la, ln]); if (this.trail.length > 80) this.trail.shift(); this.trailL.setLatLngs(this.trail); }
+    }
+    if (!this.following && this.cfg.autoCenter && this.moving && this._unfT && Date.now() - this._unfT > 15000 && !document.body.classList.contains('picking')) this.follow();
+    this._autoZoom(kmh);
+    this._syncRecenter();
+  }
+
+  frame() {
+    const now = Date.now();
+    const fdt = Math.min(0.1, Math.max(0.001, (now - (this._lastFrame || now)) / 1000)); this._lastFrame = now;
+    if (this.disp && this.pos) {
+      let tgt = this.pos;
+      if (this._fixT && this._spd > 2 && this._hasHd && this.moving) {
+        const dm = this._spd * Math.min((now - this._fixT) / 1000, 1.2), h = this._targetHd * _rad;
+        tgt = [this.pos[0] + dm * Math.cos(h) / 111320,
+               this.pos[1] + dm * Math.sin(h) / (111320 * Math.cos(this.pos[0] * _rad))];
+      }
+      const dla = tgt[0] - this.disp[0], dln = tgt[1] - this.disp[1];
+      if (Math.abs(dla) > 1e-8 || Math.abs(dln) > 1e-8) {
+        const k = 1 - Math.exp(-fdt / 0.14);
+        this.disp = [this.disp[0] + dla * k, this.disp[1] + dln * k];
+        this.meMarker.setLatLng(this.disp);
+        if (this.following) {
+          const p = this.map.latLngToContainerPoint(this.disp), sz = this.map.getSize();
+          if (Math.hypot(p.x - sz.x / 2, p.y - sz.y / 2) >= 0.6) this.map.setView(this.disp, this.map.getZoom(), { animate: false });
+        }
+      }
+    }
+
+    const shouldRotate = this.cfg.rotateMode && this.following && this._hasHd;
+    const mapRotEl = this.mapRot || $('map-rot');
+    const meRotEl = $('me-rot');
+    const compassNeedle = $('compass-needle');
+
+    const lost = !!this._fixT && now - this._fixT > 6000;
+    if (this.meEl) this.meEl.classList.toggle('lost', lost);
+    const wantOff = shouldRotate ? Math.round(window.innerHeight * (0.18 + Math.min(0.1, (this._spd || 0) / 300))) : 0;
+    this._renderOff = (this._renderOff || 0) + (wantOff - (this._renderOff || 0)) * (1 - Math.exp(-fdt / 0.45));
+    const off = this._renderOff.toFixed(1);
+
+    if (shouldRotate) {
+      const targetMap = -this._targetHd;
+      const diffMap = ((targetMap - this._renderMapAngle + 540) % 360) - 180;
+      this._renderMapAngle += diffMap * (1 - Math.exp(-fdt / 0.12));
+
+      if (mapRotEl) mapRotEl.style.transform = `translate3d(0, ${off}px, 0) rotate(${this._renderMapAngle.toFixed(2)}deg)`;
+      if (meRotEl) {
+        const cnt = -this._renderMapAngle;
+        meRotEl.style.transform = `rotate(${cnt.toFixed(2)}deg)`;
+        this._renderMarkerAngle = ((cnt % 360) + 360) % 360;
+      }
+    } else {
+      const diffMap = ((0 - this._renderMapAngle + 540) % 360) - 180;
+      this._renderMapAngle += diffMap * 0.15;
+
+      if (mapRotEl) mapRotEl.style.transform = `translate3d(0, ${off}px, 0) rotate(${this._renderMapAngle.toFixed(2)}deg)`;
+      if (meRotEl && this._hasHd) {
+        const diffMarker = ((this._targetHd - this._renderMarkerAngle + 540) % 360) - 180;
+        this._renderMarkerAngle += diffMarker * 0.12;
+        meRotEl.style.transform = `rotate(${this._renderMarkerAngle.toFixed(2)}deg)`;
+      }
+    }
+
+    if (compassNeedle) {
+      compassNeedle.style.transform = `rotate(${(-this._renderMapAngle).toFixed(2)}deg)`;
+    }
+  }
+
+  setDestinationPin(la, ln, title = 'Seçilen Hedef') {
+    this.destMarkerL.clearLayers();
+    const pop = document.createElement('div'); pop.textContent = title;
+    const icon = L.divIcon({ className: 'dest-wrap', iconSize: [34, 44], iconAnchor: [17, 42], popupAnchor: [0, -38],
+      html: '<div class="dest-pin"><svg viewBox="0 0 24 32"><path d="M12 1C6 1 1.5 5.5 1.5 11.4 1.5 19 12 31 12 31s10.5-12 10.5-19.6C22.5 5.5 18 1 12 1z" fill="#e11d48" stroke="#fff" stroke-width="2"/><circle cx="12" cy="11.5" r="4" fill="#fff"/></svg></div>' });
+    L.marker([la, ln], { icon, keyboard: false }).addTo(this.destMarkerL).bindPopup(pop).openPopup();
+  }
+
+  setPOIs(list, cfg) {
+    try {
+      this.lightsL.clearLayers();
+      this.camsL.clearLayers();
+      this.workL.clearLayers();
+      for (const p of list) {
+        let target = null;
+        if (p.kind === 'light' && cfg.showLights) target = this.lightsL;
+        else if (['work', 'pothole', 'accident', 'closed', 'oneway'].includes(p.kind) && cfg.showWorks) target = this.workL;
+        else if (p.kind === 'cam' && cfg.showCams) target = this.camsL;
+        if (!target) continue;
+
+        let col = '#dc3545';
+        if (p.kind === 'work') col = '#f59e0b';
+        if (p.kind === 'pothole') col = '#f97316';
+        if (p.kind === 'accident') col = '#8b5cf6';
+        if (p.kind === 'closed') col = '#ef4444';
+        if (p.kind === 'oneway') col = '#3b82f6';
+
+        L.circleMarker([p.lat, p.lng], {
+          radius: 7, color: '#ffffff', weight: 1.5,
+          fillColor: col, fillOpacity: 0.95
+        }).addTo(target);
+      }
+    } catch (_) {}
+  }
+}
+
+/* ═══════ Bluetooth GPS (Web Bluetooth: Android Chrome/Edge, iOS: Bluefy/WebBLE) ═══════ */
+const BLE_LN = 0x1819, BLE_LN_CH = 0x2a67;
+const BLE_UARTS = [
+  ['6e400001-b5a3-f393-e0a9-e50e24dcca9e', '6e400003-b5a3-f393-e0a9-e50e24dcca9e'],
+  [0xffe0, 0xffe1],
+  [0xfff0, 0xfff1],
+  ['49535343-fe7d-4ae5-8fa9-9fafd205e455', '49535343-1e4d-4bd9-ba61-5c2f2c0a8d4a']
+];
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+class BleGPS {
+  static get supported() { return !!(navigator.bluetooth && window.isSecureContext); }
+  static get isIOS() { return /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+  constructor(onFix, onState) {
+    this.onFix = onFix; this.onState = onState;
+    this.dev = null; this.name = ''; this.connected = false; this._manual = true;
+    this._buf = ''; this._hdop = NaN; this._alt = null; this._busy = false;
+    this._chars = []; this._dec = new TextDecoder(); this._rmcT = 0; this._fixT = 0;
+    this._dl = () => this._lost();
+    this._wd = null; this._lastData = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || !this.dev || this._manual) return;
+      if (!this.connected && !this._busy) this._lost();
+      else if (this.connected && Date.now() - this._lastData > 15000) { try { this.dev.gatt.disconnect(); } catch (_) {} } // bayat bağlantı: yeniden kur
+    });
+  }
+  async connect() {
+    if (navigator.bluetooth.getAvailability) {
+      let av = true; try { av = await navigator.bluetooth.getAvailability(); } catch (_) {}
+      if (!av) throw new Error('BT_OFF');
+    }
+    this._manual = false;
+    const dev = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [BLE_LN, ...BLE_UARTS.map(u => u[0])]
+    });
+    this._cleanup();
+    if (this.dev && this.dev !== dev) this.dev.removeEventListener('gattserverdisconnected', this._dl);
+    this.dev = dev; this.name = dev.name || 'Cihaz';
+    dev.addEventListener('gattserverdisconnected', this._dl);
+    this.onState('connecting');
+    try { await this._open(); } catch (e) { this._manual = true; throw e; }
+  }
+  async reconnect() {
+    if (!this.dev) throw new Error('NO_DEVICE');
+    this._manual = false; this.onState('connecting');
+    try { await this._open(); } catch (e) { this._manual = true; throw e; }
+  }
+  _cleanup() {
+    for (const [c, h] of this._chars) { try { c.removeEventListener('characteristicvaluechanged', h); } catch (_) {} }
+    this._chars = [];
+  }
+  async _listen(c, fn) {
+    const h = e => { this._lastData = Date.now(); try { fn(e.target.value); } catch (_) {} };
+    c.addEventListener('characteristicvaluechanged', h);
+    this._chars.push([c, h]);
+    await c.startNotifications();
+  }
+  async _open() {
+    this._cleanup();
+    let timedOut = false;
+    const srv = await Promise.race([
+      this.dev.gatt.connect(),
+      _sleep(15000).then(() => { timedOut = true; throw new Error('TIMEOUT'); })
+    ]).catch(e => { if (timedOut) { try { this.dev.gatt.disconnect(); } catch (_) {} } throw e; });
+    await _sleep(350); // Android GATT kararlılığı
+    let ok = false;
+    try {
+      const c = await (await srv.getPrimaryService(BLE_LN)).getCharacteristic(BLE_LN_CH);
+      await this._listen(c, v => this._ln(v)); ok = true;
+    } catch (_) { this._cleanup(); }
+    if (!ok) for (const [sv, ch] of BLE_UARTS) {
+      try {
+        const c = await (await srv.getPrimaryService(sv)).getCharacteristic(ch);
+        await this._listen(c, v => this._nmea(v)); ok = true; break;
+      } catch (_) { this._cleanup(); }
+    }
+    if (!ok) { this._manual = true; try { this.dev.gatt.disconnect(); } catch (_) {} throw new Error('NO_GPS_SERVICE'); }
+    this._buf = ''; this.connected = true; this._fixT = 0; this._lastData = Date.now();
+    this.onState('on');
+    clearInterval(this._wd);
+    this._wd = setInterval(() => {
+      if (!this.connected) return;
+      this.onState(Date.now() - this._fixT > 12000 ? 'nofix' : 'on');
+    }, 4000);
+  }
+  disconnect() {
+    this._manual = true; this.connected = false; clearInterval(this._wd);
+    this._cleanup();
+    try { if (this.dev && this.dev.gatt.connected) this.dev.gatt.disconnect(); } catch (_) {}
+    this.onState('off');
+  }
+  async _lost() {
+    this.connected = false; clearInterval(this._wd);
+    if (this._manual || this._busy || !this.dev) return;
+    this._busy = true; this.onState('lost');
+    for (let i = 1; i <= 8 && !this._manual; i++) {
+      await _sleep(Math.min(1500 * i, 10000));
+      if (this._manual) break;
+      try { await this._open(); this._busy = false; return; } catch (_) {}
+    }
+    this._busy = false;
+    if (!this._manual) { this._manual = true; this.onState('off'); }
+  }
+  _emit(la, ln, spd, hd, acc, alt) {
+    if (!Number.isFinite(la) || !Number.isFinite(ln) || Math.abs(la) > 90 || Math.abs(ln) > 180 || (la === 0 && ln === 0)) return;
+    this._fixT = Date.now();
+    const moving = Number.isFinite(spd) && spd > 0.8;
+    this.onFix({
+      coords: {
+        latitude: la, longitude: ln, accuracy: acc,
+        speed: Number.isFinite(spd) ? spd : null,
+        heading: moving && Number.isFinite(hd) ? ((hd % 360) + 360) % 360 : null,
+        altitude: Number.isFinite(alt) ? alt : null
+      },
+      timestamp: Date.now()
+    });
+  }
+  _ln(dv) {
+    if (dv.byteLength < 2) return;
+    const fl = dv.getUint16(0, true); let o = 2, spd = null, la, ln, hd = null;
+    try {
+      if (fl & 1) { spd = dv.getUint16(o, true) * 0.01; o += 2; }
+      if (fl & 2) o += 3;
+      if (fl & 4) { la = dv.getInt32(o, true) * 1e-7; ln = dv.getInt32(o + 4, true) * 1e-7; o += 8; }
+      if (fl & 8) o += 3;
+      if (fl & 16) { hd = dv.getUint16(o, true) * 0.01; o += 2; }
+    } catch (_) { return; }
+    if (la === undefined) return;
+    this._emit(la, ln, spd, hd, 8, null);
+  }
+  _nmea(dv) {
+    this._buf += this._dec.decode(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength), { stream: true });
+    let i;
+    while ((i = this._buf.search(/[\r\n]/)) >= 0) {
+      const line = this._buf.slice(0, i).trim(); this._buf = this._buf.slice(i + 1);
+      if (line) this._line(line);
+    }
+    if (this._buf.length > 600) this._buf = '';
+  }
+  _deg(v, h) {
+    const n = parseFloat(v); if (!Number.isFinite(n)) return NaN;
+    const d = Math.floor(n / 100), r = d + (n - d * 100) / 60;
+    return (h === 'S' || h === 'W') ? -r : r;
+  }
+  _line(l) {
+    const p = l.indexOf('$'); if (p < 0) return; l = l.slice(p);
+    const st = l.lastIndexOf('*');
+    const body = l.slice(1, st < 0 ? undefined : st);
+    if (st >= 0) {
+      let x = 0; for (let k = 0; k < body.length; k++) x ^= body.charCodeAt(k);
+      if (x !== parseInt(l.slice(st + 1, st + 3), 16)) return;
+    }
+    const f = body.split(','), t = f[0].slice(-3);
+    if (t === 'GGA') {
+      const h = parseFloat(f[8]); if (Number.isFinite(h)) this._hdop = h;
+      const a = parseFloat(f[9]); this._alt = Number.isFinite(a) ? a : null;
+      if (Date.now() - this._rmcT > 3000 && parseInt(f[6], 10) > 0) {
+        const acc = Number.isFinite(this._hdop) ? Math.min(50, Math.max(3, this._hdop * 4)) : 8;
+        this._emit(this._deg(f[2], f[3]), this._deg(f[4], f[5]), null, null, acc, this._alt);
+      }
+    } else if (t === 'RMC') {
+      if (f[2] !== 'A') return;
+      this._rmcT = Date.now();
+      const acc = Number.isFinite(this._hdop) ? Math.min(50, Math.max(3, this._hdop * 4)) : 8;
+      this._emit(this._deg(f[3], f[4]), this._deg(f[5], f[6]), parseFloat(f[7]) * 0.514444, parseFloat(f[8]), acc, this._alt);
+    }
+  }
+}
+
+/* ═══════ AppManager ═══════ */
+class AppManager {
+  constructor() {
+    this.cfg = new Config();
+    this.sheet = new SheetManager();
+    this.modesSheet = new SheetManager('modes-bg', 'modes-sheet', 'modes-handle', 'btn-open-modes', 'modes-close');
+    this.destSheet = new SheetManager('dest-bg', 'dest-sheet', 'dest-handle', 'btn-dest', 'dest-close');
+    this.hazardSheet = new SheetManager('hazard-bg', 'hazard-sheet', 'hazard-handle', 'btn-hazard', 'hazard-cancel');
+    this.layersSheet = new SheetManager('layers-bg', 'layers-sheet', 'layers-handle', 'btn-layers', 'layers-close');
+    this.map = new RotaMap(this.cfg);
+
+    this.dom = {
+      spdVal: $('spd-val'),
+      spdBar: $('spd-bar'),
+      speedDash: $('speed-dash'),
+      limBadge: $('limit-badge'),
+      limNum: $('limit-num'),
+      ftDot: $('ft-dot'),
+      ftGps: $('ft-gps'),
+      ftClock: $('ft-clock'),
+      isLoc: $('is-loc'),
+      isTemp: $('is-temp'),
+      isWind: $('is-wind'),
+      hdrRoad: $('hdr-road'),
+      dur: $('m-dur')
+    };
+
+    const KINDS = ['cam', 'pothole', 'work', 'accident', 'closed', 'oneway'];
+    const loadedHazards = (() => {
+      const h = store.json('rp_hazards', []); if (!Array.isArray(h)) return [];
+      const now = Date.now();
+      return h.filter(p => p && Number.isFinite(p.lat) && Number.isFinite(p.lng) && KINDS.includes(p.kind) &&
+        !(p.kind === 'accident' && now - (p.timestamp || 0) > 6 * 3600e3)).slice(-300);
+    })();
+    this.state = {
+      lat: null, lng: null, spd: 0, startTime: Date.now(),
+      maxSpd: 0, avgSpd: 0, sumSpd: 0, spdN: 0, dist: 0,
+      poi: loadedHazards
+    };
+
+    this.map.setTheme(this.cfg.lightTheme);
+    this.fx = new Features(this);
+    this.bindUI();
+    this.startClock();
+    this.startSplash();
+    this.startGPS();
+    this.startLoop();
+    this.enableWakeLock();
+
+    setTimeout(() => { this.fx.refreshPOIs(); }, 600);
+  }
+
+  async enableWakeLock() {
+    try {
+      if ('wakeLock' in navigator && this.cfg.wakeOn) {
+        if (this._wl && !this._wl.released) return;
+        this._wl = await navigator.wakeLock.request('screen');
+        this._wl.addEventListener('release', () => { this._wl = null; });
+      }
+    } catch (_) {}
+  }
+
+  updateRotateUI() {
+    const isRot = !!this.cfg.rotateMode;
+    const title = $('mode-rot-title');
+    const sub = $('mode-rot-sub');
+    const icon = $('mode-rot-icon');
+    const compassBtn = $('btn-compass');
+    if (title) title.textContent = isRot ? 'Yöne Göre Döndür' : 'Kuzey Yukarı';
+    if (sub) sub.textContent = isRot ? 'Aktif (Sürüş Yönü)' : 'Sabit (Harita Düz)';
+    if (icon) {
+      icon.style.background = isRot ? 'rgba(29,185,84,0.15)' : 'rgba(255,255,255,0.06)';
+      icon.style.color = isRot ? 'var(--green)' : 'var(--text-secondary)';
+    }
+    if (compassBtn) compassBtn.classList.toggle('active', isRot);
+  }
+
+  bindUI() {
+    const save = () => {
+      this.cfg.save(
+        $('cfg-ac')?.checked, $('cfg-rot')?.checked, $('cfg-snd')?.checked,
+        $('cfg-tts')?.checked, $('cfg-wk')?.checked, $('cfg-lt')?.checked,
+        $('cfg-thr')?.value, {
+          autoStart: $('cfg-as')?.checked,
+          lights: $('cfg-lights')?.checked,
+          cams: $('cfg-cams')?.checked,
+          works: $('cfg-works')?.checked,
+          vehicle: $('cfg-vehicle')?.value,
+          fuelPrice: $('cfg-fuel-price')?.value,
+          showFuel: $('cfg-show-fuel')?.checked,
+          carName: $('cfg-car-name')?.value,
+          autoNight: $('cfg-an')?.checked
+        }
+      );
+      this.map.setTheme(this.cfg.lightTheme);
+      this.updateRotateUI();
+      this.fx.refreshPOIs();
+      this.fx.updateFuel();
+      this.fx.updateCarIntegration();
+    };
+
+    if ($('cfg-as')) $('cfg-as').checked = this.cfg.autoStart;
+    if ($('cfg-ac')) $('cfg-ac').checked = this.cfg.autoCenter;
+    if ($('cfg-rot')) $('cfg-rot').checked = this.cfg.rotateMode;
+    if ($('cfg-snd')) $('cfg-snd').checked = this.cfg.soundOn;
+    if ($('cfg-tts')) $('cfg-tts').checked = this.cfg.ttsOn;
+    if ($('cfg-wk')) $('cfg-wk').checked = this.cfg.wakeOn;
+    if ($('cfg-lt')) $('cfg-lt').checked = this.cfg.lightTheme;
+    if ($('cfg-thr')) $('cfg-thr').value = this.cfg.threshold;
+    if ($('cfg-lights')) $('cfg-lights').checked = this.cfg.showLights;
+    if ($('cfg-cams')) $('cfg-cams').checked = this.cfg.showCams;
+    if ($('cfg-works')) $('cfg-works').checked = this.cfg.showWorks;
+    if ($('cfg-vehicle')) $('cfg-vehicle').value = this.cfg.vehicle;
+    if ($('cfg-fuel-price')) $('cfg-fuel-price').value = this.cfg.fuelPrice;
+    if ($('cfg-show-fuel')) $('cfg-show-fuel').checked = this.cfg.showFuel;
+    if ($('cfg-car-name')) $('cfg-car-name').value = this.cfg.carName;
+    if ($('cfg-an')) $('cfg-an').checked = this.cfg.autoNight;
+
+    ['cfg-as','cfg-ac','cfg-rot','cfg-snd','cfg-tts','cfg-wk','cfg-lt','cfg-thr',
+     'cfg-lights','cfg-cams','cfg-works','cfg-vehicle','cfg-fuel-price','cfg-show-fuel','cfg-car-name','cfg-an'].forEach(id => {
+      const el = $(id);
+      if (el) el.addEventListener('change', save);
+    });
+
+    $('btn-layers')?.addEventListener('click', () => this.modesSheet.close());
+    $('btn-cfg')?.addEventListener('click', () => this.modesSheet.close());
+    $('btn-open-modes')?.addEventListener('click', () => { this.destSheet.close(); this.hazardSheet.close(); });
+    let svcTested = false;
+    $('btn-cfg')?.addEventListener('click', () => { if (!svcTested && navigator.onLine) { svcTested = true; setTimeout(() => this.fx.testServices(true), 500); } });
+    $('btn-dest')?.addEventListener('click', () => { this.modesSheet.close(); });
+    $('is-loc')?.addEventListener('click', () => { const n = prompt('Konum adı:', $('is-loc').textContent); if (n) { $('is-loc').textContent = n.trim(); this.fx._geoPos = [this.state.lat, this.state.lng]; } });
+    $('modes-ok-btn')?.addEventListener('click', () => this.modesSheet.close());
+
+    const toggleRot = () => {
+      this.cfg.rotateMode = !this.cfg.rotateMode;
+      if ($('cfg-rot')) $('cfg-rot').checked = this.cfg.rotateMode;
+      save();
+      this.updateRotateUI();
+      toast(this.cfg.rotateMode ? '🧭 Sürüş Yönü (Yöne Göre Döndür Aktif)' : '🧭 Kuzey Yukarı (Harita Sabit)');
+    };
+    $('btn-compass')?.addEventListener('click', toggleRot);
+    $('btn-mode-rot')?.addEventListener('click', toggleRot);
+    this.updateRotateUI();
+
+    $('btn-zoom-in')?.addEventListener('click', () => { if (this.map && this.map.map) this.map.map.zoomIn(); });
+    $('btn-zoom-out')?.addEventListener('click', () => { if (this.map && this.map.map) this.map.map.zoomOut(); });
+
+    const renderDestHistory = () => {
+      const wrap = $('dest-history-wrap');
+      const box = $('dest-history');
+      if (!wrap || !box) return;
+      const hist = (() => { const h = store.json('rp_dest_history', []); return Array.isArray(h) ? h : []; })();
+      if (!hist || !hist.length) { wrap.style.display = 'none'; return; }
+      box.innerHTML = '';
+      hist.slice(0, 5).forEach(h => {
+        const btn = document.createElement('button');
+        btn.className = 'dest-row';
+        btn.innerHTML = `<div style="font-weight:600;font-size:13px;color:var(--text-primary);display:flex;align-items:center;gap:8px;"><span>📍</span><span>${esc(h.name)}</span></div>`;
+        btn.addEventListener('click', () => {
+          this.destSheet.close();
+          this.fx.setDestination(h.la, h.ln, h.name);
+        });
+        box.appendChild(btn);
+      });
+      wrap.style.display = 'block';
+    };
+    $('btn-dest')?.addEventListener('click', renderDestHistory);
+
+    $('btn-theme')?.addEventListener('click', () => {
+      const light = !document.body.classList.contains('light-theme');
+      if ($('cfg-lt')) $('cfg-lt').checked = light;
+      this.map.setTheme(light);
+      save();
+    });
+
+    $('btn-refresh-status')?.addEventListener('click', () => this.fx.testServices());
+    this.initBle();
+
+    $('btn-clear-hazards')?.addEventListener('click', () => {
+      if (confirm('Eklenen tüm özel tehlike, kaza ve radarlar silinsin mi?')) {
+        store.set('rp_hazards', '[]');
+        this.state.poi = [];
+        this.fx.refreshPOIs();
+        toast('Tüm özel uyarılar temizlendi.');
+      }
+    });
+
+    $('btn-reset-dur')?.addEventListener('click', () => this.fx.resetTrip());
+
+    document.querySelectorAll('.quick-dest-btn').forEach(btn => {
+      const q = btn.getAttribute('data-q'); let lp = null;
+      btn.addEventListener('click', () => this.fx.quickDest(q));
+      if (q === 'Ev' || q === 'İş Yeri') {
+        btn.addEventListener('touchstart', () => { lp = setTimeout(() => { lp = 'done'; this.fx.forgetPlace(q); }, 800); }, { passive: true });
+        btn.addEventListener('touchend', e => { if (lp === 'done') e.preventDefault(); clearTimeout(lp); }, { passive: false });
+      }
+    });
+
+    const searchAddr = () => { const q = $('dest-q')?.value.trim(); if (q) this.fx.search(q, false); };
+    $('dest-go')?.addEventListener('click', searchAddr);
+    $('dest-q')?.addEventListener('keydown', e => { if (e.key === 'Enter') searchAddr(); });
+
+    $('dest-pick')?.addEventListener('click', () => {
+      this.destSheet.close();
+      document.body.classList.add('picking'); this.map.unfollow();
+    });
+
+    $('pick-no')?.addEventListener('click', () => { document.body.classList.remove('picking'); this.fx.pendingSave = null; });
+    $('pick-ok')?.addEventListener('click', () => { document.body.classList.remove('picking'); this.fx.onPick(); });
+
+    document.querySelectorAll('.hazard-opt-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const kind = btn.getAttribute('data-type');
+        let lat = this.state.lat, lng = this.state.lng;
+        if (!lat || !lng) {
+          const center = this.map.map.getCenter();
+          lat = center.lat; lng = center.lng;
+        }
+        const newPoi = { lat, lng, kind, timestamp: Date.now() };
+        this.state.poi.push(newPoi); if (this.state.poi.length > 300) this.state.poi.shift();
+        store.set('rp_hazards', JSON.stringify(this.state.poi));
+        this.fx.refreshPOIs();
+        toast('Tehlike / yol durumu bildirimi eklendi!');
+        this.hazardSheet.close();
+      });
+    });
+  }
+
+  startClock() {
+    const tick = () => {
+      const d = new Date();
+      if (this.dom.ftClock)
+        this.dom.ftClock.textContent = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+      
+      if (this.dom.dur && this.state.startTime) {
+        const elapsed = Math.floor((Date.now() - this.state.startTime) / 1000);
+        const m = Math.floor(elapsed / 60);
+        const s = elapsed % 60;
+        this.dom.dur.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      }
+    };
+    tick();
+    setInterval(tick, 1000);
+  }
+
+  startSplash() {
+    const splash = $('splash');
+    const bar = document.querySelector('.sp-bar-fill');
+    const pct = document.querySelector('.sp-pct');
+    if (splash) splash.addEventListener('click', _killSplashNow);
+
+    let progress = 0;
+    const itv = setInterval(() => {
+      progress += 6;
+      if (bar) bar.style.transform = `scaleX(${progress / 100})`;
+      if (pct) pct.textContent = `${Math.min(100, progress)}%`;
+      const ss = $('splash-status'); if (ss) ss.textContent = progress < 30 ? 'Araç sistemleri hazırlanıyor...' : progress < 60 ? 'Harita yükleniyor...' : progress < 90 ? 'GPS aranıyor...' : 'Hazır';
+      if (progress >= 100) {
+        clearInterval(itv);
+        _killSplashNow();
+      }
+    }, 70);
+  }
+
+  startGPS() {
+    if (!('geolocation' in navigator)) {
+      if (this.dom.ftGps) this.dom.ftGps.textContent = 'GPS Desteklenmiyor';
+      return;
+    }
+    this._kf = new GPSFilter();
+    this._onPos = (pos, ext) => {
+        if (!ext && this._bleOn && Date.now() - (this._bleT || 0) < 5000) return;
+        _killSplashNow();
+        const { latitude: rla, longitude: rln, speed, accuracy } = pos.coords;
+        const tNow = pos.timestamp || Date.now();
+        const acc = Number.isFinite(accuracy) ? accuracy : 50;
+        this._gpsT0 = this._gpsT0 || Date.now();
+        if (acc <= 50) this._goodFix = true;
+        if (acc > (this._goodFix ? 150 : 100) && (this._goodFix || Date.now() - this._gpsT0 < 8000)) {
+          if (this.dom.ftGps) this.dom.ftGps.textContent = `GPS aranıyor (±${Math.round(acc)} m)`;
+          return;
+        }
+        if (acc > 500 && !this._warnedCoarse && Date.now() - this._gpsT0 > 10000) {
+          this._warnedCoarse = true;
+          toast(`Konum çok kaba (±${Math.round(acc)} m).`, 9000);
+        }
+        const kmhRaw = (speed !== null && Number.isFinite(speed)) ? Math.max(0, speed * 3.6) : null;
+        const [la, ln] = this._kf.process(rla, rln, acc, tNow, kmhRaw === null ? 0 : kmhRaw / 3.6);
+        let kmh = kmhRaw;
+        if (kmh === null) {
+          const p = this._lastFix; kmh = 0;
+          if (p) {
+            const dt = (tNow - p.t) / 1000, dd = hav(p.la, p.ln, la, ln);
+            if (dt >= 0.5 && dt <= 15 && dd >= 3 && acc <= 50) kmh = dd / dt * 3.6;
+          }
+        }
+        this._lastFix = { la, ln, t: tNow };
+        const S = this.state, prevD = this._distFix;
+        S.lat = la; S.lng = ln; S.spd = kmh; S.acc = acc;
+        if (prevD && kmh > 3 && acc <= 50) {
+          const d = hav(prevD[0], prevD[1], la, ln);
+          if (d < 500) S.dist += d / 1000;
+        }
+        this._distFix = [la, ln];
+        if (kmh > 3) { S.sumSpd += kmh; S.spdN++; S.avgSpd = S.sumSpd / S.spdN; }
+        if (kmh > S.maxSpd && kmh < 300) S.maxSpd = kmh;
+        this._lastPosT = Date.now();
+        this._hdgNow = Number.isFinite(pos.coords.heading) ? pos.coords.heading : this.map._targetHd;
+
+        const safe = (n, f) => { try { f(); } catch (e) { _logErr(n, e); } };
+        safe('pushFix', () => this.map.map && this.map.pushFix(la, ln, acc, pos.coords.heading, kmh));
+        safe('hud', () => this.updateHUD(kmh, acc, pos.coords.altitude));
+        safe('fx', () => this.fx.onFix(la, ln, kmh, acc));
+      };
+
+    const opts = { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 };
+    const onErr = err => {
+      const m = { 1: 'Konum izni reddedildi', 2: 'Konum alınamıyor', 3: 'GPS zaman aşımı' }[err.code] || 'GPS hatası';
+      if (this.dom.ftGps) this.dom.ftGps.textContent = m;
+      if (this.dom.ftDot) this.dom.ftDot.classList.remove('on');
+      if (err.code === 1) toast('Konum izni gerekli. Tarayıcı/ayarlardan izin verin.', 6000);
+      else if (err.code === 3 || err.code === 2) { setTimeout(() => this._watchGPS(), 1500); }
+      _killSplashNow();
+    };
+    this._watchGPS = () => {
+      try { if (this._wid != null) navigator.geolocation.clearWatch(this._wid); } catch (_) {}
+      this._wid = navigator.geolocation.watchPosition(p => this._onPos(p, false), onErr, opts);
+    };
+    this._watchGPS();
+    navigator.geolocation.getCurrentPosition(p => this._onPos(p, false), () => {}, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') { this.enableWakeLock(); this._watchGPS(); }
+    });
+    try { navigator.permissions?.query({ name: 'geolocation' }).then(p => { p.onchange = () => { if (p.state === 'granted') this._watchGPS(); }; }); } catch (_) {}
+    window.addEventListener('offline', () => toast('Çevrimdışı: harita önbellekten, canlı veriler beklemede', 4000));
+    window.addEventListener('online', () => { toast('Bağlantı geri geldi'); this.fx._rdFail = 0; this.fx.refreshPOIs(true); });
+    setInterval(() => {
+      if (!this._lastPosT) return;
+      const age = Date.now() - this._lastPosT;
+      if (age > 8000 && this.dom.ftGps) { this.dom.ftGps.textContent = 'Sinyal zayıf'; this.dom.ftDot?.classList.remove('on'); }
+    }, 3000);
+  }
+
+  updateHUD(kmh, acc, alt) {
+    const D = this.dom, S = this.state, lim = this.fx.limit;
+    const k = Math.round(kmh);
+    if (D.spdVal) D.spdVal.textContent = k;
+    if (D.spdBar) D.spdBar.style.transform = `scaleX(${clamp(kmh / 180, 0, 1).toFixed(3)})`;
+    if (D.ftDot) D.ftDot.classList.add('on');
+    if (D.ftGps) D.ftGps.textContent = this._bleOn && Date.now() - (this._bleT || 0) < 5000 ? 'Harici GPS (BT)' : `GPS Aktif (±${Math.round(acc)} m)`;
+    const bars = document.querySelectorAll('#ft-bars .ft-bar'), q = acc <= 8 ? 4 : acc <= 20 ? 3 : acc <= 50 ? 2 : 1;
+    bars.forEach((b, i) => b.classList.toggle('active', i < q));
+    const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+    set('ss-max', Math.round(S.maxSpd)); set('ss-avg', Math.round(S.avgSpd)); set('ss-trip', S.dist.toFixed(1));
+    set('m-alt', Number.isFinite(alt) ? Math.round(alt) + ' m' : '-- m');
+    const h = this._hdgNow; if (Number.isFinite(h)) set('m-dir', ['K', 'KD', 'D', 'GD', 'G', 'GB', 'B', 'KB'][Math.round(h / 45) % 8]);
+    set('m-acc', '±' + Math.round(acc) + ' m');
+    let trf = 'Normal';
+    if (lim && kmh > 3 && lim >= 50) trf = kmh < lim * 0.35 ? 'Yoğun' : kmh < lim * 0.65 ? 'Orta' : 'Akıcı';
+    const ln_ = this.fx.learnedLabel(); if (ln_) trf = ln_;
+    if (this.fx._tt && Date.now() - this.fx._tt.t < 60000) trf = this.fx._tt.label;
+    set('m-trf', trf);
+    this.fx.updateFuel();
+    // Hız uyarısı
+    const dash = this.dom.speedDash;
+    if (dash) {
+      const tol = this.cfg.threshold + (this.fx.limitEst ? 10 : 0), over = lim && kmh > lim + tol, warn = lim && kmh > lim + (this.fx.limitEst ? 5 : 0);
+      dash.classList.toggle('over', !!over); dash.classList.toggle('warn', !!warn && !over);
+      $('ovr')?.classList.toggle('on', !!over);
+      if (over && Date.now() - (this._warnT || 0) > 15000) {
+        this._warnT = Date.now();
+        if (this.cfg.soundOn) beep(880, 0.25);
+        this.fx.vib([200, 100, 200]);
+        if (this.cfg.ttsOn) speak('Hız sınırını aşıyorsunuz');
+      }
+    }
+  }
+
+  initBle() {
+    const btn = $('btn-bt'), st = $('bt-status');
+    const setUI = (txt, on) => { if (st) st.textContent = txt; if (btn) btn.textContent = on ? 'Kes' : 'Bağlan'; };
+    if (!BleGPS.supported) {
+      const ios = BleGPS.isIOS;
+      setUI(ios ? 'iPhone: Bluefy tarayıcısı gerekir' : (window.isSecureContext ? 'Bu tarayıcı desteklemiyor' : 'HTTPS gerekli'), false);
+      btn?.addEventListener('click', () => toast(ios
+        ? 'iOS Safari/Chrome Web Bluetooth desteklemez. Harici GPS için App Store\'dan "Bluefy" tarayıcısında açın; aksi halde cihaz GPS\'i kullanılır.'
+        : 'Chrome/Edge (Android) ve HTTPS gerekir. Cihaz GPS\'i kullanılıyor.', 7000));
+      return;
+    }
+    this.ble = new BleGPS(pos => { this._bleOn = true; this._bleT = Date.now(); this._onPos(pos, true); }, s => {
+      const n = this.ble.name;
+      if (s === 'on') { this._bleOn = true; setUI(`Bağlı: ${n}`, true); toast('Bluetooth GPS bağlandı'); }
+      else if (s === 'nofix') setUI(`Bağlı: ${n} — uydu bekleniyor`, true);
+      else if (s === 'connecting') setUI('Bağlanıyor…', false);
+      else if (s === 'lost') { setUI('Bağlantı koptu, yeniden deneniyor…', true); toast('Bluetooth bağlantısı koptu, cihaz GPS\'ine geçildi'); }
+      else { this._bleOn = false; setUI('Bağlı değil', false); }
+    });
+    btn?.addEventListener('click', async () => {
+      if (this.ble.connected || this.ble._busy) { this.ble.disconnect(); return; }
+      try {
+        let done = false;
+        if (this.ble.dev) { try { await this.ble.reconnect(); done = true; } catch (_) {} }
+        if (!done) await this.ble.connect();
+      }
+      catch (e) {
+        this._bleOn = false; setUI('Bağlı değil', false);
+        const n = e && e.name, m = e && e.message;
+        if (m === 'BT_OFF') return toast('Bluetooth kapalı. Açıp tekrar deneyin' + (BleGPS.isIOS ? '.' : ' (Android\'de Konum da açık olmalı).'), 6000);
+        if ((n === 'NotFoundError' && /adapter|not available|powered/i.test(m || '')) ) return toast('Bluetooth ya da Konum servisi kapalı. Açıp tekrar deneyin.', 6000);
+        if (n === 'NotFoundError' || n === 'AbortError') return; // kullanıcı iptal etti
+        if (n === 'NetworkError' || m === 'TIMEOUT') return toast('Cihaza bağlanılamadı. Cihaz açık, yakın ve başka bir uygulamaya bağlı değil mi?', 7000);
+        if (m === 'NO_GPS_SERVICE') toast('Bu cihazda desteklenen GPS servisi yok (Nordic UART / FFE0 / Konum-Hız). Klasik (SPP) BT GPS Web Bluetooth ile çalışmaz.', 8000);
+        else if (n === 'SecurityError' || n === 'NotAllowedError') toast('Bluetooth izni reddedildi. Tarayıcı ve sistem ayarlarından izin verin.', 6000);
+        else toast('Bluetooth bağlantısı kurulamadı: ' + (m || n || 'bilinmeyen hata'), 6000);
+      }
+    });
+  }
+
+  startLoop() {
+    let ef = 0, last = 0, sum = 0, n = 0;
+    this._frameMin = 0;
+    const loop = ts => {
+      requestAnimationFrame(loop);
+      if (document.hidden) return;
+      const dt = ts - last; last = ts;
+      if (n < 90 && dt > 0 && dt < 250) { sum += dt; if (++n === 90 && sum / n > 26) { this._frameMin = 30; document.documentElement.classList.add('lite'); _logErr('perf', 'düşük performans: lite mod, ort ' + Math.round(sum / n) + 'ms'); } }
+      if (this._frameMin && dt < this._frameMin) { last -= dt; return; }
+      try { this.map.map && this.map.frame(); } catch (e) { if (++ef < 5) _logErr('frame', e); }
+    };
+    requestAnimationFrame(loop);
+  }
+}
+
+/* ═══════ Helpers ═══════ */
+const isStandalone = () => { try { return !!(window.matchMedia && matchMedia('(display-mode: standalone)').matches) || !!navigator.standalone; } catch (_) { return false; } };
+const APP_VER = '2026.10.25-22';
+try {
+  if ((navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 3 ||
+      (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) document.documentElement.classList.add('lite');
+} catch (_) {}
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); window._ip = e; });
+const _rad = Math.PI / 180;
+function hav(a, b, c, d) {
+  const R = 6371000, dl = (c - a) * _rad, dn = (d - b) * _rad;
+  const x = Math.sin(dl / 2) ** 2 + Math.cos(a * _rad) * Math.cos(c * _rad) * Math.sin(dn / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+function bearingTo(a, b, c, d) {
+  const y = Math.sin((d - b) * _rad) * Math.cos(c * _rad);
+  const x = Math.cos(a * _rad) * Math.sin(c * _rad) - Math.sin(a * _rad) * Math.cos(c * _rad) * Math.cos((d - b) * _rad);
+  return (Math.atan2(y, x) / _rad + 360) % 360;
+}
+let _toastT = null;
+function toast(msg, ms = 2800) {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove('on'), ms);
+}
+let _actx = null;
+function beep(f = 800, d = 0.2) {
+  try {
+    _actx = _actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_actx.state === 'suspended') _actx.resume();
+    const o = _actx.createOscillator(), g = _actx.createGain();
+    o.frequency.value = f; g.gain.value = 0.12; o.connect(g); g.connect(_actx.destination);
+    o.start(); o.stop(_actx.currentTime + d);
+  } catch (_) {}
+}
+function speak(t) {
+  try {
+    if (!('speechSynthesis' in window)) return;
+    const u = new SpeechSynthesisUtterance(t); u.lang = 'tr-TR'; u.rate = 1;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch (_) {}
+}
+// iOS ses/konuşma kilidini ilk dokunuşta aç
+addEventListener('pointerdown', function u() {
+  removeEventListener('pointerdown', u);
+  try { _actx = _actx || new (window.AudioContext || window.webkitAudioContext)(); _actx.resume(); } catch (_) {}
+  try { if ('speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (_) {}
+}, { once: true });
+
+const TR_MAN = { turn: 'dönün', 'new name': 'devam edin', depart: 'yola çıkın', arrive: 'varış', merge: 'birleşin', 'on ramp': 'rampaya girin', 'off ramp': 'çıkıştan çıkın', fork: 'ayrımda', 'end of road': 'yol sonunda', continue: 'devam edin', roundabout: 'kavşaktan', rotary: 'kavşaktan', 'exit roundabout': 'kavşaktan çıkın' };
+const TR_MOD = { left: 'sola', right: 'sağa', 'slight left': 'hafif sola', 'slight right': 'hafif sağa', 'sharp left': 'keskin sola', 'sharp right': 'keskin sağa', straight: 'düz', uturn: 'U dönüşü yapın' };
+const HW_LIMIT = { motorway: 120, trunk: 110, primary: 90, secondary: 82, tertiary: 70, unclassified: 50, residential: 50, living_street: 20, service: 30 };
+const fmtD = m => m < 1000 ? Math.round(m / 10) * 10 + ' m' : (m / 1000).toFixed(1) + ' km';
+
+/* ═══════ Features ═══════ */
+class Features {
+  constructor(app) {
+    this.app = app; this.limit = null; this.route = null; this.dest = null; this.pendingSave = null;
+    this.net = []; this._netPos = null; this._netT = 0; this._limPos = null; this._limT = 0;
+    this._wxT = 0; this._geoPos = null; this._offN = 0; this._camWarn = {};
+    this.parkL = null;
+    this.routeL = (typeof L !== 'undefined' && app.map.map) ? L.polyline([], { color: '#2d7aff', weight: 7, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(app.map.map) : null;
+    this.bindTools();
+    this.updateCarIntegration();
+    this.recoverTrip();
+    try { if (new URLSearchParams(location.search).get('a') === 'dest') setTimeout(() => $('btn-dest')?.click(), 1200); } catch (_) {}
+    const pk = store.json('rp_park', null); if (pk) this.showPark(pk);
+    if (store.get('rp_trafficlayer') === '1' && store.get('rp_ttkey')) setTimeout(() => { try { this.toggleTraffic(true); } catch (_) {} }, 800);
+  }
+  get m() { return this.app.map; }
+  get S() { return this.app.state; }
+
+  bindTools() {
+    const A = this.app;
+    $('btn-voice')?.addEventListener('click', () => { A.modesSheet.close(); this.startVoice(); });
+    this.bindTomTom();
+    $('btn-traffic')?.addEventListener('click', () => { A.modesSheet.close(); this.toggleTraffic(); });
+    if ($('diag-ver')) $('diag-ver').textContent = 'Sürüm ' + APP_VER + ' · sürüm, tarayıcı ve hata kayıtlarını kopyala';
+    $('btn-diag')?.addEventListener('click', () => this.copyDiag());
+    $('btn-extmap')?.addEventListener('click', () => this.openExtMap());
+    $('btn-history')?.addEventListener('click', () => this.showHistory());
+    $('btn-offline')?.addEventListener('click', () => this.downloadTiles());
+    $('btn-install')?.addEventListener('click', () => this.installApp());
+    if (isStandalone()) $('btn-install')?.style.setProperty('display', 'none');
+    $('btn-trail')?.addEventListener('click', () => {
+      const m = this.m; if (!m.trailL) return;
+      m._trailOn = m._trailOn === false; m.trailL.setStyle({ opacity: m._trailOn === false ? 0 : 0.35 });
+      toast(m._trailOn === false ? 'İz gizlendi' : 'İz gösteriliyor');
+    });
+    $('btn-park')?.addEventListener('click', () => {
+      const pk = store.json('rp_park', null);
+      if (pk && confirm('Kayıtlı park yerine gidilsin mi? (İptal: yeni park yeri kaydet)')) { A.modesSheet.close(); this.setDestination(pk.la, pk.ln, 'Park Yerim'); return; }
+      if (this.S.lat == null) return toast('Konum bekleniyor…');
+      const p = { la: this.S.lat, ln: this.S.lng }; store.set('rp_park', JSON.stringify(p)); this.showPark(p); toast('🅿️ Park yeri kaydedildi');
+    });
+    const share = async (txt) => {
+      if (this.S.lat == null) return toast('Konum bekleniyor…');
+      const url = `https://maps.google.com/?q=${this.S.lat.toFixed(6)},${this.S.lng.toFixed(6)}`;
+      try { if (navigator.share) await navigator.share({ title: 'RotaPro', text: txt, url }); else { await navigator.clipboard.writeText(txt + ' ' + url); toast('Bağlantı kopyalandı'); } } catch (_) {}
+    };
+    $('btn-share-pos')?.addEventListener('click', () => share('Konumum:'));
+    $('btn-share-eta')?.addEventListener('click', () => share(this.route ? `Varışıma ${$('nb-eta')?.textContent || ''} kaldı.` : 'Konumum:'));
+    $('nb-x')?.addEventListener('click', () => this.cancelRoute());
+    $('dest-clear')?.addEventListener('click', () => { this.cancelRoute(); A.destSheet.close(); });
+    $('trip-close-btn')?.addEventListener('click', () => { const b = $('trip-bg'); if (b) b.style.display = 'none'; });
+
+    $('btn-hud')?.addEventListener('click', () => { A.modesSheet.close(); document.body.classList.add('hud-mode'); });
+    let ex = $('btn-exit-hud');
+    if (!ex) { ex = document.createElement('button'); ex.id = 'btn-exit-hud'; ex.textContent = '✕ HUD\'dan Çık'; ex.style.cssText = 'position:fixed;top:calc(env(safe-area-inset-top,0px)+12px);right:12px;z-index:9999;padding:10px 14px;border-radius:12px;display:none;background:rgba(0,0,0,.6);color:#fff;border:1px solid rgba(255,255,255,.2)'; document.body.appendChild(ex); }
+    ex.addEventListener('click', () => document.body.classList.remove('hud-mode'));
+    let mx = $('btn-hud-mirror');
+    if (!mx) { mx = document.createElement('button'); mx.id = 'btn-hud-mirror'; mx.textContent = '↔ Ayna'; mx.style.cssText = ex.style.cssText.replace('right:12px', 'right:150px'); document.body.appendChild(mx); }
+    if (store.get('rp_hudmirror') === '1') document.body.classList.add('hud-mirror');
+    mx.addEventListener('click', () => { const on = document.body.classList.toggle('hud-mirror'); store.set('rp_hudmirror', on ? '1' : '0'); });
+    new MutationObserver(() => { const on = document.body.classList.contains('hud-mode'); ex.style.display = on ? 'flex' : 'none'; mx.style.display = on ? 'flex' : 'none'; }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+    // Müzik: tarayıcı başka uygulamayı kontrol edemez; seçili uygulamayı açar
+    const src = store.get('rp_music') || 'spotify';
+    const setSrc = s => {
+      store.set('rp_music', s);
+      $('ms-spotify')?.classList.toggle('on', s === 'spotify'); $('ms-ytm')?.classList.toggle('on', s === 'ytm');
+      if ($('mw-title')) $('mw-title').textContent = s === 'spotify' ? 'Spotify' : 'YouTube Music';
+      if ($('mw-sub')) $('mw-sub').textContent = 'Seçili uygulamayı açar';
+    };
+    setSrc(src);
+    $('ms-spotify')?.addEventListener('click', () => setSrc('spotify'));
+    $('ms-ytm')?.addEventListener('click', () => setSrc('ytm'));
+    const openMusic = (login) => {
+      const s = store.get('rp_music') || 'spotify';
+      const web = s === 'spotify' ? (login ? 'https://accounts.spotify.com/login' : 'https://open.spotify.com/') : (login ? 'https://accounts.google.com/ServiceLogin?service=youtube' : 'https://music.youtube.com/');
+      window.open(web, '_blank', 'noopener');
+    };
+    $('mw-play')?.addEventListener('click', () => openMusic(false));
+  }
+
+  showPark(p) {
+    if (!this.m.map) return;
+    if (this.parkL) this.parkL.remove();
+    this.parkL = L.marker([p.la, p.ln], { icon: L.divIcon({ className: '', html: '<div style="font-size:26px;filter:drop-shadow(0 2px 3px #000)">🅿️</div>', iconSize: [28, 28], iconAnchor: [14, 14] }), keyboard: false }).addTo(this.m.map);
+  }
+
+  updateCarIntegration() {
+    document.title = 'RotaPro — Sürücü Asistanı';
+  }
+  updateFuel() {
+    const C = this.app.cfg, el = $('m-fuel'), box = el?.closest('.metric');
+    if (box) box.style.display = C.showFuel ? '' : 'none';
+    if (!el) return;
+    const cons = { benzin: 7.5, dizel: 6, lpg: 9.5, elektrik: 16 }[C.vehicle] || 7.5;
+    el.textContent = '₺' + (this.S.dist * cons / 100 * C.fuelPrice).toFixed(1);
+    const l = $('m-fuel-lbl'); if (l) l.textContent = 'YAKIT MALİYETİ';
+  }
+
+  /* ── POI (kamera / ışık / özel uyarı) ── */
+  async refreshPOIs(force) {
+    const S = this.S, ctr = S.lat != null ? [S.lat, S.lng] : (this.m.map ? [this.m.map.getCenter().lat, this.m.map.getCenter().lng] : null);
+    if (ctr && (force || !this._netPos || hav(this._netPos[0], this._netPos[1], ctr[0], ctr[1]) > 1200 || Date.now() - this._netT > 600000) && navigator.onLine) {
+      this._netPos = ctr; this._netT = Date.now();
+      const q = `[out:json][timeout:8];(node["highway"="speed_camera"](around:3500,${ctr[0]},${ctr[1]});node["enforcement"="maxspeed"](around:3500,${ctr[0]},${ctr[1]});node["highway"="traffic_signals"](around:1500,${ctr[0]},${ctr[1]}););out 250;`;
+      try {
+        const j = await fetchOverpass(q);
+        this.net = (j.elements || []).map(e => ({ lat: e.lat, lng: e.lon, kind: e.tags?.highway === 'traffic_signals' ? 'light' : 'cam', net: true }));
+      } catch (_) {}
+    }
+    this.m.setPOIs([...this.net, ...S.poi], this.app.cfg);
+  }
+
+  /* ── Her GPS noktasında ── */
+  onFix(la, ln, kmh, acc) {
+    const now = Date.now();
+    if (!this._wxT || now - this._wxT > 600000) { this._wxT = now; this.weather(la, ln); }
+    if (!this._geoPos || hav(this._geoPos[0], this._geoPos[1], la, ln) > 1500) { this._geoPos = [la, ln]; this.reverse(la, ln); }
+    if (!this._netPos || hav(this._netPos[0], this._netPos[1], la, ln) > 1200) this.refreshPOIs();
+    this.roadInfo(la, ln, kmh);
+    this.learn(kmh);
+    this.checkNight(la, ln);
+    this.trafficInfo(la, ln);
+    if (now - (this._tripSaveT || 0) > 20000) { this._tripSaveT = now; this.snapshotTrip(); }
+    // Kamera yakınlık uyarısı
+    if (kmh > 5 && this.app.cfg.showCams) {
+      for (const p of this.net) {
+        if (p.kind !== 'cam') continue;
+        const d = hav(la, ln, p.lat, p.lng);
+        if (d < 350) {
+          const key = p.lat + ',' + p.lng;
+          if (now - (this._camWarn[key] || 0) > 120000) {
+            const br = bearingTo(la, ln, p.lat, p.lng), h = this.m._targetHd, df = Math.abs(((br - h + 540) % 360) - 180);
+            if (!this.m._hasHd || df < 50) {
+              this._camWarn[key] = now; toast('📷 Hız kamerası ' + fmtD(d) + ' ileride', 4000);
+              this.vib(150); if (this.app.cfg.soundOn) beep(1000, 0.2); if (this.app.cfg.ttsOn) speak('İleride hız kamerası');
+            }
+          }
+        }
+      }
+    }
+    if (this.route) this.trackRoute(la, ln, kmh);
+  }
+
+  async weather(la, ln) {
+    try {
+      const j = await fetchJSON(`https://api.open-meteo.com/v1/forecast?latitude=${la.toFixed(3)}&longitude=${ln.toFixed(3)}&current=temperature_2m,wind_speed_10m`);
+      const c = j.current || {};
+      if ($('is-temp')) $('is-temp').textContent = Math.round(c.temperature_2m) + '°C';
+      if ($('is-wind')) $('is-wind').textContent = Math.round(c.wind_speed_10m) + ' km/s';
+    } catch (_) {}
+  }
+  async reverse(la, ln) {
+    const w = 1100 - (Date.now() - (this._nomT || 0)); if (w > 0) await new Promise(r => setTimeout(r, w)); this._nomT = Date.now();
+    try {
+      const j = await fetchJSON(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=tr&lat=${la}&lon=${ln}`);
+      const a = j.address || {};
+      const n = a.suburb || a.neighbourhood || a.town || a.city_district || a.city || a.county || '';
+      const c = a.city || a.town || a.province || '';
+      if ($('is-loc')) $('is-loc').textContent = [n, c].filter((v, i, r) => v && r.indexOf(v) === i).join(', ') || 'Konum';
+    } catch (_) {}
+  }
+  async loadRoads(la, ln) {
+    this._rdBusy = true;
+    try {
+      const j = await fetchOverpass(`[out:json][timeout:10];way(around:800,${la},${ln})["highway"];out tags geom;`, 10000);
+      const SKIP = ['footway', 'path', 'cycleway', 'steps', 'pedestrian', 'track', 'bridleway', 'corridor', 'proposed', 'construction'];
+      this._roads = (j.elements || []).filter(w => w.tags && w.geometry && w.geometry.length > 1 && !SKIP.includes(w.tags.highway))
+        .map(w => ({ id: w.id, t: w.tags, g: w.geometry.map(p => [p.lat, p.lon]) }));
+      this._rdPos = [la, ln]; this._rdT = Date.now(); this._rdFail = 0;
+      this.setSt('st-lim', true);
+    } catch (_) { this._rdFail = Date.now(); this.setSt('st-lim', false); }
+    this._rdBusy = false;
+  }
+  parseLimit(v) {
+    if (v == null) return null; v = String(v).trim();
+    if (/^\d+$/.test(v)) return +v;
+    const mph = v.match(/^(\d+)\s*mph$/i); if (mph) return Math.round(mph[1] * 1.609 / 5) * 5;
+    return { 'TR:urban': 50, 'TR:rural': 90, 'TR:motorway': 120, 'TR:trunk': 110, 'urban': 50, 'rural': 90, 'motorway': 120 }[v] || null;
+  }
+  roadInfo(la, ln, kmh) {
+    const now = Date.now();
+    if (navigator.onLine && !this._rdBusy && now - (this._rdFail || 0) > 8000 &&
+        (!this._rdPos || hav(this._rdPos[0], this._rdPos[1], la, ln) > 350 || now - this._rdT > 300000)) this.loadRoads(la, ln);
+    if (!this._roads || now - (this._riT || 0) < 900) return;
+    this._riT = now;
+    const hd = this.m._hasHd && kmh > 5 ? this.m._targetHd : null;
+    let best = null, bs = 1e9;
+    for (const w of this._roads) {
+      for (let i = 0; i < w.g.length - 1; i++) {
+        const r = segProj(la, ln, w.g[i], w.g[i + 1]); if (r.d > 40) continue;
+        let sc = r.d;
+        if (hd != null) { const df = Math.abs(((r.brg - hd + 540) % 360) - 180); sc += Math.min(df, 180 - df) * 0.5; }
+        if (sc < bs) { bs = sc; best = { w, brg: r.brg }; }
+      }
+    }
+    if (!best) { if (now - (this._limSeen || 0) > 8000) { this._curWay = null; if (this.limit != null) this.setLimit(null, false, ''); } return; }
+    this._limSeen = now; this._curWay = best.w.id;
+    const t = best.w.t;
+    let fwd = true; if (hd != null) fwd = Math.abs(((best.brg - hd + 540) % 360) - 180) < 90;
+    let lim = this.parseLimit(fwd ? (t['maxspeed:forward'] ?? t.maxspeed) : (t['maxspeed:backward'] ?? t.maxspeed));
+    let est = false;
+    if (!lim) { lim = HW_LIMIT[String(t.highway).replace('_link', '')] || null; est = !!lim; }
+    this.setLimit(lim, est, t.name || t.ref || '');
+  }
+  setLimit(lim, est, road) {
+    if (lim === this.limit && est === this.limitEst && road === this._road) return;
+    this.limit = lim; this.limitEst = est; this._road = road;
+    const b = $('limit-badge'); if (b) { b.classList.toggle('off', !lim); b.classList.toggle('est', !!est); b.title = est ? 'Tahmini sınır (yol türüne göre)' : 'Yol verisinden alınan sınır'; }
+    if ($('limit-num')) $('limit-num').textContent = lim || '';
+    if ($('hdr-road')) $('hdr-road').textContent = road || '';
+  }
+  setSt(id, ok, txt) { const e = $(id); if (!e) return; e.textContent = txt || (ok ? 'Çevrimiçi / Hazır' : 'Erişilemiyor'); e.classList.toggle('ok', !!ok); }
+  async testServices(quiet) {
+    if (!quiet) toast('Servisler test ediliyor…');
+    const t = async (id, fn) => { try { await fn(); this.setSt(id, true); } catch (_) { this.setSt(id, false); } };
+    await Promise.all([
+      t('st-lim', () => fetchOverpass('[out:json][timeout:5];node(1);out;', 6000)),
+      t('st-wx', () => fetchJSON('https://api.open-meteo.com/v1/forecast?latitude=39&longitude=32&current=temperature_2m', 6000)),
+      t('st-trf', () => fetchJSON('https://router.project-osrm.org/route/v1/driving/32.85,39.92;32.86,39.93?overview=false', 6000)),
+      t('st-geo', () => fetchJSON('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=Ankara', 6000))
+    ]);
+    if (!quiet) toast('Test tamamlandı');
+  }
+
+  /* ── Arama / hedef ── */
+  async search(q, silent) {
+    const box = $('dest-res'); if (!box) return;
+    box.innerHTML = '<div style="padding:12px;opacity:.7">Aranıyor…</div>';
+    const w = 1100 - (Date.now() - (this._nomT || 0)); if (w > 0) await new Promise(r => setTimeout(r, w)); this._nomT = Date.now();
+    try {
+      let u = `https://nominatim.openstreetmap.org/search?format=json&limit=7&accept-language=tr&addressdetails=0&q=${encodeURIComponent(q)}`;
+      if (this.S.lat != null) { const d = 0.6; u += `&viewbox=${this.S.lng - d},${this.S.lat + d},${this.S.lng + d},${this.S.lat - d}`; }
+      const r = await fetchJSON(u, 9000);
+      if (!r.length) { box.innerHTML = '<div style="padding:12px;opacity:.7">Sonuç bulunamadı</div>'; return; }
+      box.innerHTML = '';
+      r.forEach(x => {
+        const b = document.createElement('button'); b.className = 'dest-row';
+        const d = this.S.lat != null ? ' · ' + fmtD(hav(this.S.lat, this.S.lng, +x.lat, +x.lon)) : '';
+        b.innerHTML = `<div style="font-weight:600;font-size:13px;text-align:left">📍 ${esc(x.display_name.split(',').slice(0, 3).join(','))}<span style="opacity:.6;font-weight:500">${esc(d)}</span></div>`;
+        b.addEventListener('click', () => { this.app.destSheet.close(); this.setDestination(+x.lat, +x.lon, x.display_name.split(',')[0]); });
+        box.appendChild(b);
+      });
+    } catch (_) { box.innerHTML = '<div style="padding:12px;color:var(--red)">Arama başarısız. Bağlantıyı kontrol edin.</div>'; }
+  }
+  quickDest(q) {
+    if (q === 'Ev' || q === 'İş Yeri') {
+      const p = store.json('rp_place_' + q, null);
+      if (p) { this.app.destSheet.close(); return this.setDestination(p.la, p.ln, q); }
+      this.pendingSave = q; this.app.destSheet.close(); document.body.classList.add('picking'); this.m.unfollow();
+      return toast(`${q} konumunu haritadan seçin`);
+    }
+    const input = $('dest-q'); if (input) input.value = q;
+    this.search(q, true);
+  }
+  forgetPlace(q) { if (confirm(q + ' konumu silinsin mi?')) { try { localStorage.removeItem('rp_place_' + q); } catch (_) {} toast(q + ' silindi'); } }
+  onPick() {
+    const c = this.m.map.getCenter();
+    if (this.pendingSave) {
+      const q = this.pendingSave; this.pendingSave = null;
+      store.set('rp_place_' + q, JSON.stringify({ la: c.lat, ln: c.lng })); toast(q + ' kaydedildi');
+      return this.setDestination(c.lat, c.lng, q);
+    }
+    this.setDestination(c.lat, c.lng, 'Seçilen Hedef');
+  }
+  async setDestination(la, ln, name) {
+    if (this.S.lat == null) return toast('Önce konum bulunmalı…');
+    this.dest = { la, ln, name };
+    const h = store.json('rp_dest_history', []); const arr = (Array.isArray(h) ? h : []).filter(x => x.name !== name);
+    arr.unshift({ la, ln, name }); store.set('rp_dest_history', JSON.stringify(arr.slice(0, 10)));
+    this.m.setDestinationPin(la, ln, name);
+    toast('Rota hesaplanıyor…');
+    await this.fetchRoute();
+  }
+  async fetchRoute() {
+    const d = this.dest, S = this.S; if (!d || this._routeBusy) return;
+    this._routeBusy = true;
+    try {
+      const j = await fetchJSON(`https://router.project-osrm.org/route/v1/driving/${S.lng},${S.lat};${d.ln},${d.la}?overview=full&geometries=geojson&steps=true`, 12000);
+      const r = j.routes && j.routes[0]; if (!r) throw new Error('no route');
+      const pts = r.geometry.coordinates.map(c => [c[1], c[0]]);
+      const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + hav(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]));
+      const steps = []; let acc = 0;
+      (r.legs || []).forEach(l => (l.steps || []).forEach(s => { steps.push({ at: acc, loc: [s.maneuver.location[1], s.maneuver.location[0]], type: s.maneuver.type, mod: s.maneuver.modifier, name: s.name || '' }); acc += s.distance; }));
+      // adım konumunu rota üzerindeki mesafeye çevir
+      steps.forEach(s => { let bi = 0, bd = 1e12; for (let i = 0; i < pts.length; i++) { const dd = (pts[i][0] - s.loc[0]) ** 2 + (pts[i][1] - s.loc[1]) ** 2; if (dd < bd) { bd = dd; bi = i; } } s.at = cum[bi]; });
+      this.route = { pts, cum, total: cum[cum.length - 1], dur: r.duration, steps, spoken: {}, idx: 0 };
+      this.routeL?.setLatLngs(pts);
+      $('nav-banner')?.classList.add('show'); if ($('nav-banner')) $('nav-banner').style.display = 'flex';
+      if ($('dest-clear')) $('dest-clear').style.display = 'block';
+      this._offN = 0; this.m.follow();
+      if (this.m && this.m.map) try { this.m.map.setZoom(Math.max(this.m.map.getZoom(), 16), { animate: false }); } catch (_) {}
+      this.setSt('st-trf', true);
+      this.trackRoute(S.lat, S.lng, S.spd);
+      if (this.app.cfg.ttsOn) speak('Rota hazır. ' + fmtD(r.distance) + ', yaklaşık ' + Math.round(r.duration / 60) + ' dakika.');
+    } catch (e) { _logErr('route', e); this.setSt('st-trf', false); toast('Rota bulunamadı. Bağlantıyı kontrol edin.', 4500); }
+    this._routeBusy = false;
+  }
+  trackRoute(la, ln, kmh) {
+    const R = this.route; if (!R) return;
+    // rotaya en yakın nokta (ileri yönlü pencere)
+    let bi = R.idx, bd = 1e12;
+    for (let i = Math.max(0, R.idx - 3); i < Math.min(R.pts.length - 1, R.idx + 80); i++) {
+      const r = segProj(la, ln, R.pts[i], R.pts[i + 1]); if (r.d < bd) { bd = r.d; bi = i; }
+    }
+    if (bd > 80) { // pencere dışı: tüm rotada ara
+      for (let i = 0; i < R.pts.length - 1; i++) { const r = segProj(la, ln, R.pts[i], R.pts[i + 1]); if (r.d < bd) { bd = r.d; bi = i; } }
+    }
+    R.idx = bi;
+    const along = R.cum[bi] + hav(R.pts[bi][0], R.pts[bi][1], la, ln);
+    const rem = Math.max(0, R.total - along);
+    if (bd > 60 && kmh > 5) { if (++this._offN >= 4 && Date.now() - (this._rrT || 0) > 12000) { this._rrT = Date.now(); this._offN = 0; toast('Rota yeniden hesaplanıyor…'); if (this.app.cfg.ttsOn) speak('Rota yeniden hesaplanıyor'); this.fetchRoute(); return; } } else this._offN = 0;
+    // sonraki manevra
+    let nx = R.steps.find(s => s.at > along + 5 && s.type !== 'depart') || R.steps[R.steps.length - 1];
+    const dn = nx ? Math.max(0, nx.at - along) : rem;
+    let txt = 'Düz devam edin';
+    if (nx) {
+      if (nx.type === 'arrive') txt = 'Varış noktası';
+      else { const mod = TR_MOD[nx.mod] || ''; txt = nx.mod === 'uturn' ? mod : (mod ? mod + ' ' : '') + (TR_MAN[nx.type] || 'devam edin'); txt = txt.charAt(0).toUpperCase() + txt.slice(1) + (nx.name ? ' · ' + nx.name : ''); }
+    }
+    if ($('nb-dist')) $('nb-dist').textContent = fmtD(dn);
+    if ($('nb-txt')) $('nb-txt').textContent = txt;
+    this.lookAhead(along);
+    let eta;
+    if (R.live && Date.now() - R.live.t < 180000) {
+      const base = R.dur * (rem / R.total), look = R.dur * (Math.min(rem, 8000) / R.total);
+      eta = Math.round((base + look * (R.live.f - 1)) / 60);
+    } else eta = Math.round((rem / Math.max(8, kmh > 5 ? kmh : 30) * 3.6) / 60);
+    if ($('nb-eta')) $('nb-eta').textContent = eta >= 60 ? Math.floor(eta / 60) + ' sa ' + (eta % 60) + ' dk' : Math.max(1, eta) + ' dk';
+    const ar = $('nb-arrow')?.querySelector('svg'); if (ar && nx) { const deg = { left: -90, right: 90, 'slight left': -45, 'slight right': 45, 'sharp left': -135, 'sharp right': 135, uturn: 180 }[nx.mod] || 0; ar.style.transform = `rotate(${deg}deg)`; }
+    if (this.app.cfg.ttsOn && nx) {
+      const key = nx.at + nx.type; const th = kmh > 70 ? 400 : 150;
+      if (dn < th && !R.spoken[key]) { R.spoken[key] = 1; speak(`${fmtD(dn)} sonra ${txt}`); }
+    }
+    if (rem < 30) { speak('Varış noktasına ulaştınız'); toast('🏁 Varış noktasına ulaştınız', 5000); this.cancelRoute(); this.endTrip(true); }
+  }
+  cancelRoute() {
+    this.route = null; this.dest = null; this.routeL?.setLatLngs([]); this.m.destMarkerL?.clearLayers();
+    const nb = $('nav-banner'); if (nb) { nb.classList.remove('show'); nb.style.display = 'none'; }
+    if ($('dest-clear')) $('dest-clear').style.display = 'none';
+  }
+  tripSummary() {
+    const S = this.S, el = Math.floor((Date.now() - S.startTime) / 1000), m = Math.floor(el / 60);
+    const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+    set('ts-dist', S.dist.toFixed(1) + ' km'); set('ts-dur', String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'));
+    set('ts-avg', Math.round(S.avgSpd) + ' km/s'); set('ts-cost', $('m-fuel')?.textContent || '₺0');
+    const b = $('trip-bg'); if (b) b.style.display = 'flex';
+  }
+  endTrip(show) {
+    if (show && this.S.dist > 0.2) this.tripSummary();
+    this.saveTrip();
+    Object.assign(this.S, { startTime: Date.now(), maxSpd: 0, avgSpd: 0, sumSpd: 0, spdN: 0, dist: 0 });
+    this.m.trail = []; this.m.trailL?.setLatLngs([]); this.updateFuel();
+  }
+  resetTrip() { this.endTrip(true); toast('Yolculuk sıfırlandı'); }
+
+  /* ── Anahtarsız trafik: yolların normal hızını öğren, şimdiki hızla kıyasla ── */
+  learn(kmh) {
+    const now = Date.now(), id = this._curWay;
+    const R = this._rec || (this._rec = []); R.push([now, kmh]); while (R.length && now - R[0][0] > 40000) R.shift();
+    if (!id || kmh < 8) return;
+    const P = this._prof || (this._prof = (() => { const p = store.json('rp_prof', {}); return p && typeof p === 'object' && !Array.isArray(p) ? p : {}; })());
+    const e = P[id] || (P[id] = [0, 0, 0]);
+    e[0] = Math.max(kmh, e[0] * 0.9995); e[1] = Math.min(e[1] + 1, 1000); e[2] = now;
+    if (now - (this._profT || 0) > 60000) {
+      this._profT = now;
+      const k = Object.keys(P); if (k.length > 400) k.sort((a, b) => P[a][2] - P[b][2]).slice(0, k.length - 400).forEach(x => delete P[x]);
+      store.set('rp_prof', JSON.stringify(P));
+    }
+  }
+  learnedLabel() {
+    const e = this._prof && this._curWay ? this._prof[this._curWay] : null, R = this._rec;
+    if (!e || e[1] < 25 || e[0] < 25 || !R || R.length < 5) return null;
+    const r = (R.reduce((n, x) => n + x[1], 0) / R.length) / e[0];
+    return r >= 0.75 ? 'Akıcı' : r >= 0.45 ? 'Orta' : 'Yoğun';
+  }
+
+  /* ── Rotanın ilerisindeki canlı trafik (TomTom, anahtar varsa) ── */
+  _pointAt(R, d) { for (let i = 0; i < R.cum.length; i++) if (R.cum[i] >= d) return R.pts[i]; return R.pts[R.pts.length - 1]; }
+  async lookAhead(along) {
+    const R = this.route, key = (store.get('rp_ttkey') || '').trim(), now = Date.now();
+    if (!R || !key || !navigator.onLine || this._laBusy || now - (this._laT || 0) < 60000) return;
+    this._laBusy = true; this._laT = now;
+    try {
+      const rem = R.total - along, offs = [800, 2500, 4500, 7000].filter(o => o < rem);
+      if (!offs.length) { this._laBusy = false; return; }
+      const res = await Promise.all(offs.map(o => {
+        const p = this._pointAt(R, along + o);
+        return fetchJSON(`https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key=${encodeURIComponent(key)}&point=${p[0].toFixed(5)},${p[1].toFixed(5)}`, 7000).catch(() => null);
+      }));
+      const ok = res.map((j, i) => j && j.flowSegmentData && j.flowSegmentData.freeFlowSpeed > 0 ? { off: offs[i], r: Math.max(0.1, (j.flowSegmentData.currentSpeed || 0) / j.flowSegmentData.freeFlowSpeed), closed: !!j.flowSegmentData.roadClosure } : null).filter(Boolean);
+      if (ok.length) {
+        const f = Math.min(6, ok.reduce((n, x) => n + 1 / x.r, 0) / ok.length), worst = ok.reduce((a, b) => (b.r < a.r ? b : a));
+        R.live = { t: Date.now(), f, worst: worst.r, off: worst.off, closed: ok.some(x => x.closed) };
+        if ((worst.r < 0.5 || R.live.closed) && now - (this._laWarn || 0) > 300000) {
+          this._laWarn = now;
+          const m = R.live.closed ? `İleride ${fmtD(worst.off)} sonra kapalı yol` : `İleride ${fmtD(worst.off)} sonra yoğun trafik`;
+          toast('🚦 ' + m, 5000); this.vib([120, 80, 120]); if (this.app.cfg.ttsOn) speak(m);
+        }
+      }
+    } catch (e) { _logErr('lookAhead', e); }
+    this._laBusy = false;
+  }
+
+  /* ── Canlı trafik (TomTom Flow Segment Data, anahtar varsa) ── */
+  async trafficInfo(la, ln) {
+    const key = (store.get('rp_ttkey') || '').trim(), now = Date.now();
+    if (!key || !navigator.onLine || this._ttBusy) return;
+    if (this._ttPos && now - this._ttT < 20000 && hav(this._ttPos[0], this._ttPos[1], la, ln) < 150) return;
+    this._ttBusy = true; this._ttT = now; this._ttPos = [la, ln];
+    try {
+      const j = await fetchJSON(`https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key=${encodeURIComponent(key)}&point=${la.toFixed(5)},${ln.toFixed(5)}`, 8000);
+      const f = j.flowSegmentData; if (!f) throw new Error('no data');
+      const r = f.freeFlowSpeed > 0 ? f.currentSpeed / f.freeFlowSpeed : 1;
+      this._tt = { t: Date.now(), label: f.roadClosure ? 'Kapalı' : r >= 0.8 ? 'Akıcı' : r >= 0.5 ? 'Orta' : 'Yoğun' };
+    } catch (e) { this._tt = null; if (!this._ttWarn || now - this._ttWarn > 300000) { this._ttWarn = now; toast('Canlı trafik alınamadı (anahtarı kontrol edin)', 4000); } }
+    this._ttBusy = false;
+  }
+
+  /* ── TomTom ayar kartı ── */
+  bindTomTom() {
+    const inp = $('cfg-tt-key'); if (!inp) return;
+    const msg = $('tt-msg'), badge = $('tt-badge');
+    const say = (t, c) => { if (msg) { msg.textContent = t; msg.className = 'tt-msg' + (c ? ' ' + c : ''); } };
+    const stored = () => (store.get('rp_ttkey') || '').trim();
+    const refresh = () => { const on = !!stored(); if (badge) { badge.textContent = on ? 'Aktif' : 'Pasif'; badge.classList.toggle('on', on); } };
+    const valid = v => /^[A-Za-z0-9_-]{8,80}$/.test(v);
+    const save = v => {
+      v = (v || '').trim();
+      if (v && !valid(v)) { say('Anahtar biçimi geçersiz (harf, rakam, - ve _ olmalı)', 'bad'); return false; }
+      store.set('rp_ttkey', v); this._tt = null; this._ttPos = null; this._laT = 0;
+      if (this.trafficL) this.toggleTraffic(!!v);
+      refresh(); say(v ? 'Kaydedildi. Canlı trafik etkin.' : 'Anahtar silindi. Canlı trafik kapalı.', v ? 'ok' : ''); return true;
+    };
+    inp.value = stored(); refresh();
+    inp.addEventListener('change', () => save(inp.value));
+    $('tt-save')?.addEventListener('click', () => save(inp.value));
+    $('tt-clear')?.addEventListener('click', () => { inp.value = ''; save(''); });
+    $('tt-eye')?.addEventListener('click', () => { inp.type = inp.type === 'password' ? 'text' : 'password'; });
+    $('tt-paste')?.addEventListener('click', async () => {
+      try { const t = (await navigator.clipboard.readText()).trim(); if (t) { inp.value = t; say('Yapıştırıldı. Test Et veya Kaydet\'e basın.'); } else say('Panoda metin yok', 'bad'); }
+      catch (_) { say('Pano erişimi reddedildi, elle yapıştırın', 'bad'); }
+    });
+    $('tt-test')?.addEventListener('click', async () => {
+      const k = inp.value.trim() || stored(); const b = $('tt-test');
+      if (!k) return say('Önce bir anahtar girin', 'bad');
+      if (!valid(k)) return say('Anahtar biçimi geçersiz', 'bad');
+      if (!navigator.onLine) return say('İnternet bağlantısı yok', 'bad');
+      b.disabled = true; say('Test ediliyor…');
+      try {
+        const j = await fetchJSON(`https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key=${encodeURIComponent(k)}&point=37.5847,36.9371`, 9000);
+        if (j && j.flowSegmentData) say(`Anahtar çalışıyor ✓ (örnek yolda ${j.flowSegmentData.currentSpeed} km/s)`, 'ok'); else say('Beklenmeyen yanıt', 'bad');
+      } catch (_) { say('Doğrulanamadı: anahtar hatalı, Traffic API kapalı ya da kota dolu', 'bad'); }
+      b.disabled = false;
+    });
+  }
+
+  /* ── Trafik harita katmanı (TomTom raster flow, anahtar gerekir) ── */
+  toggleTraffic(force) {
+    const map = this.m.map; if (!map) return toast('Harita yok');
+    const key = (store.get('rp_ttkey') || '').trim();
+    const on = force !== undefined ? force : !this.trafficL;
+    if (!on) { if (this.trafficL) { map.removeLayer(this.trafficL); this.trafficL = null; } store.set('rp_trafficlayer', '0'); return toast('Trafik katmanı kapalı'); }
+    if (!key) return toast('Önce Ayarlar\'dan TomTom API anahtarını girin', 5000);
+    if (this.trafficL) map.removeLayer(this.trafficL);
+    this.trafficL = L.tileLayer(`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}`,
+      { maxZoom: 19, opacity: 0.85, zIndex: 350, crossOrigin: true, attribution: '' }).addTo(map);
+    let errs = 0; this.trafficL.on('tileerror', () => { if (++errs === 6) toast('Trafik katmanı yüklenemedi (anahtarı kontrol edin)', 5000); });
+    store.set('rp_trafficlayer', '1'); toast('🚦 Trafik katmanı açık');
+  }
+
+  /* ── Tanılama ── */
+  async copyDiag() {
+    let sw = 'yok', perm = '?';
+    try { const r = await navigator.serviceWorker?.getRegistration(); sw = r ? (r.active ? 'aktif' : 'bekliyor') : 'kayıtsız'; } catch (_) {}
+    try { perm = (await navigator.permissions.query({ name: 'geolocation' })).state; } catch (_) {}
+    let log = []; try { log = JSON.parse(localStorage.getItem('rp_errlog') || '[]'); } catch (_) {}
+    const d = {
+      ver: APP_VER, time: new Date().toISOString(), ua: navigator.userAgent, online: navigator.onLine, secure: window.isSecureContext,
+      leaflet: typeof L !== 'undefined' ? L.version : 'yok', sw, geoPermission: perm, ble: BleGPS.supported, ios: BleGPS.isIOS,
+      speech: !!(window.SpeechRecognition || window.webkitSpeechRecognition), standalone: isStandalone(),
+      gps: { acc: this.S.acc, lat: this.S.lat != null }, tomtom: !!(store.get('rp_ttkey') || '').trim(), errors: log.slice(-10)
+    };
+    const txt = JSON.stringify(d, null, 2);
+    try { await navigator.clipboard.writeText(txt); toast('Tanılama bilgisi kopyalandı'); }
+    catch (_) { prompt('Kopyalayın:', txt); }
+  }
+
+  /* ── Titreşim ── */
+  vib(p) { try { if (this.app.cfg.soundOn && navigator.vibrate) navigator.vibrate(p); } catch (_) {} }
+
+  /* ── Sürüş geçmişi ── */
+  _tripObj() {
+    const S = this.S, C = this.app.cfg, dur = Math.floor((Date.now() - S.startTime) / 1000);
+    const cons = { benzin: 7.5, dizel: 6, lpg: 9.5, elektrik: 16 }[C.vehicle] || 7.5;
+    return { t: S.startTime, d: +S.dist.toFixed(2), dur, avg: Math.round(S.avgSpd), max: Math.round(S.maxSpd), cost: +(S.dist * cons / 100 * C.fuelPrice).toFixed(1) };
+  }
+  _pushTrip(o) {
+    const arr = store.json('rp_trips', []); const a = Array.isArray(arr) ? arr : [];
+    if (a.some(x => x.t === o.t)) return;
+    a.unshift(o); store.set('rp_trips', JSON.stringify(a.slice(0, 60)));
+  }
+  saveTrip() {
+    const o = this._tripObj();
+    if (o.d >= 0.3 && o.dur >= 60) this._pushTrip(o);
+    try { localStorage.removeItem('rp_cur_trip'); } catch (_) {}
+  }
+  snapshotTrip() { const o = this._tripObj(); if (o.d >= 0.3) store.set('rp_cur_trip', JSON.stringify(o)); }
+  recoverTrip() {
+    const c = store.json('rp_cur_trip', null);
+    if (c && c.d >= 0.3 && c.dur >= 60) this._pushTrip(c);
+    try { localStorage.removeItem('rp_cur_trip'); } catch (_) {}
+  }
+  showHistory() {
+    $('hist-bg')?.remove();
+    const trips = (() => { const t = store.json('rp_trips', []); return Array.isArray(t) ? t : []; })();
+    const wk = trips.filter(x => Date.now() - x.t < 7 * 864e5);
+    const sum = (a, k) => a.reduce((n, x) => n + (+x[k] || 0), 0);
+    const bg = document.createElement('div'); bg.id = 'hist-bg';
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1100;display:flex;align-items:center;justify-content:center;padding:16px';
+    const card = document.createElement('div');
+    card.style.cssText = 'width:100%;max-width:440px;max-height:80vh;overflow:auto;background:var(--bg-card-solid);color:var(--text-primary);border:1px solid var(--border);border-radius:20px;padding:20px';
+    const fmt = x => new Date(x.t).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    card.innerHTML = `<div style="font-weight:700;font-size:18px;margin-bottom:4px">🕘 Sürüş Geçmişi</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:14px">Son 7 gün: <b>${sum(wk, 'd').toFixed(1)} km</b> · ${Math.round(sum(wk, 'dur') / 60)} dk · ₺${sum(wk, 'cost').toFixed(0)}</div>` +
+      (trips.length ? trips.slice(0, 30).map(x => `<div style="padding:10px 0;border-top:1px solid var(--border);font-size:13px"><div style="font-weight:600">${esc(fmt(x))}</div><div style="color:var(--text-secondary);font-size:12px;margin-top:2px">${(+x.d).toFixed(1)} km · ${Math.round(x.dur / 60)} dk · ort ${x.avg} · maks ${x.max} km/s · ₺${x.cost}</div></div>`).join('')
+        : '<div style="padding:16px 0;opacity:.7;text-align:center">Henüz kayıtlı yolculuk yok</div>') +
+      '<div style="display:flex;gap:8px;margin-top:14px"><button id="hist-clear" class="pb" style="flex:1;color:var(--red)">Temizle</button><button id="hist-close" class="pb ok" style="flex:1">Kapat</button></div>';
+    bg.appendChild(card); document.body.appendChild(bg);
+    bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
+    card.querySelector('#hist-close').addEventListener('click', () => bg.remove());
+    card.querySelector('#hist-clear').addEventListener('click', () => { if (confirm('Tüm sürüş geçmişi silinsin mi?')) { store.set('rp_trips', '[]'); bg.remove(); toast('Geçmiş silindi'); } });
+    this.app.modesSheet.close();
+  }
+
+  /* ── Harici harita uygulaması ── */
+  openExtMap() {
+    const S = this.S, ios = BleGPS.isIOS; let la, ln;
+    if (this.dest) { la = this.dest.la; ln = this.dest.ln; } else if (S.lat != null) { la = S.lat; ln = S.lng; } else return toast('Konum bekleniyor…');
+    const u = this.dest
+      ? (ios ? `https://maps.apple.com/?daddr=${la},${ln}&dirflg=d` : `https://www.google.com/maps/dir/?api=1&destination=${la},${ln}&travelmode=driving`)
+      : (ios ? `https://maps.apple.com/?ll=${la},${ln}&q=Konumum` : `https://www.google.com/maps/search/?api=1&query=${la},${ln}`);
+    window.open(u, '_blank', 'noopener');
+  }
+
+  /* ── Uygulama kurulumu ── */
+  async installApp() {
+    if (isStandalone()) return toast('Uygulama zaten yüklü');
+    if (window._ip) { try { window._ip.prompt(); await window._ip.userChoice; } catch (_) {} window._ip = null; return; }
+    toast(BleGPS.isIOS ? 'Safari: Paylaş ▸ "Ana Ekrana Ekle"' : 'Tarayıcı menüsünden "Uygulamayı yükle / Ana ekrana ekle" seçin', 7000);
+  }
+
+  /* ── Otomatik gece modu ── */
+  isNight(la, ln, d = new Date()) {
+    const n = Math.floor((d - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5);
+    const g = 2 * Math.PI / 365 * (n - 1 + (d.getUTCHours() - 12) / 24);
+    const eqt = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+    const dc = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+    const c = Math.cos(90.833 * _rad) / (Math.cos(la * _rad) * Math.cos(dc)) - Math.tan(la * _rad) * Math.tan(dc);
+    if (c > 1) return true; if (c < -1) return false;
+    const ha = Math.acos(c) / _rad, sr = 720 - 4 * (ln + ha) - eqt, ss = 720 - 4 * (ln - ha) - eqt;
+    const m = d.getUTCHours() * 60 + d.getUTCMinutes(), mod = v => ((v % 1440) + 1440) % 1440;
+    return mod(m - sr) > mod(ss - sr);
+  }
+  checkNight(la, ln) {
+    if (!this.app.cfg.autoNight) { this._night = undefined; return; }
+    const now = Date.now(); if (now - (this._nightT || 0) < 60000) return; this._nightT = now;
+    const night = this.isNight(la, ln);
+    if (night === this._night) return; this._night = night;
+    const c = $('cfg-lt'); if (c) { c.checked = !night; c.dispatchEvent(new Event('change')); }
+  }
+
+  /* ── Çevrimdışı harita indirme ── */
+  async downloadTiles() {
+    if (!('caches' in window)) return toast('Bu tarayıcı çevrimdışı önbelleği desteklemiyor');
+    if (this.S.lat == null) return toast('Önce konum bulunmalı');
+    if (!navigator.onLine) return toast('İnternet bağlantısı gerekli');
+    if (this._dl) return toast('İndirme sürüyor…');
+    const la = this.S.lat, ln = this.S.lng, list = [];
+    for (const [z, r] of [[12, 6], [13, 4], [14, 3], [15, 2], [16, 1.5]]) {
+      const n = 2 ** z, tx = (ln + 180) / 360 * n, ty = (1 - Math.log(Math.tan(la * _rad) + 1 / Math.cos(la * _rad)) / Math.PI) / 2 * n;
+      const k = Math.ceil(r * 1000 / (40075016.686 * Math.cos(la * _rad) / n));
+      for (let x = Math.floor(tx) - k; x <= Math.floor(tx) + k; x++) for (let y = Math.floor(ty) - k; y <= Math.floor(ty) + k; y++) if (y >= 0 && y < n) list.push([z, ((x % n) + n) % n, y]);
+    }
+    list.length = Math.min(list.length, 220);
+    this._dl = true; let done = 0, ok = 0;
+    toast(`Çevrimdışı harita indiriliyor (${list.length} parça)…`, 4000);
+    try {
+      const cache = await caches.open('rotapro-tiles-v2');
+      const worker = async () => {
+        while (list.length) {
+          const [z, x, y] = list.pop();
+          const url = `https://${'abc'[Math.abs(x + y) % 3]}.tile.openstreetmap.org/${z}/${x}/${y}.png`;
+          try {
+            if (!(await cache.match(url))) { const res = await fetch(url, { mode: 'cors' }); if (res.ok) { await cache.put(url, res); ok++; } }
+            else ok++;
+          } catch (_) {}
+          if (++done % 50 === 0) toast(`İndiriliyor… ${done}`, 2000);
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker()]);
+      toast(`✅ Çevrimdışı harita hazır (${ok} parça, yakın çevre)`, 5000);
+    } catch (e) { _logErr('tiles', e); toast('İndirme başarısız'); }
+    this._dl = false;
+  }
+
+  /* ── Sesli komut ── */
+  startVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { const t = prompt('Komut yazın (örn: "Kızılay git", "eve git", "gece modu", "kaza bildir"):'); if (t) this.runCommand(t); return; }
+    if (this._rec) { try { this._rec.stop(); } catch (_) {} return; }
+    const r = new SR(); r.lang = 'tr-TR'; r.interimResults = false; r.maxAlternatives = 1; this._rec = r;
+    $('btn-voice')?.classList.add('listening'); toast('🎤 Dinleniyor…', 4000);
+    r.onresult = e => { const t = e.results[0][0].transcript; toast('“' + t + '”', 3000); this.runCommand(t); };
+    r.onerror = e => toast(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? 'Mikrofon izni gerekli' : 'Ses anlaşılamadı');
+    r.onend = () => { this._rec = null; $('btn-voice')?.classList.remove('listening'); };
+    try { r.start(); } catch (_) { this._rec = null; }
+  }
+  addHazard(kind) {
+    const S = this.S; if (S.lat == null) return toast('Konum bekleniyor…');
+    S.poi.push({ lat: S.lat, lng: S.lng, kind, timestamp: Date.now() }); if (S.poi.length > 300) S.poi.shift();
+    store.set('rp_hazards', JSON.stringify(S.poi)); this.refreshPOIs(); toast('Bildirim eklendi');
+  }
+  runCommand(raw) {
+    const t = String(raw).toLocaleLowerCase('tr-TR').trim(), A = this.app;
+    const say = m => { toast(m); if (A.cfg.ttsOn) speak(m); };
+    const theme = light => { const c = $('cfg-lt'); if (c) { c.checked = light; c.dispatchEvent(new Event('change')); } };
+    if (/(rota|navigasyon|yol).*(iptal|kapat|bitir)|iptal et/.test(t)) { this.cancelRoute(); return say('Rota iptal edildi'); }
+    if (/gece modu|koyu tema|karanlık/.test(t)) { theme(false); return say('Gece modu'); }
+    if (/gündüz modu|açık tema|aydınlık/.test(t)) { theme(true); return say('Gündüz modu'); }
+    if (/^eve\b|eve git|evime/.test(t)) return this.quickDest('Ev');
+    if (/işe\b|iş yerine|işyerine/.test(t)) return this.quickDest('İş Yeri');
+    if (/park.*(kaydet|işaretle)/.test(t)) { $('btn-park')?.click(); return; }
+    if (/park/.test(t)) { const pk = store.json('rp_park', null); if (pk) { this.setDestination(pk.la, pk.ln, 'Park Yerim'); return say('Park yerine gidiliyor'); } return say('Kayıtlı park yeri yok'); }
+    if (/radar|kamera/.test(t)) { this.addHazard('cam'); return say('Radar bildirildi'); }
+    if (/kaza/.test(t)) { this.addHazard('accident'); return say('Kaza bildirildi'); }
+    if (/çukur/.test(t)) { this.addHazard('pothole'); return say('Çukur bildirildi'); }
+    if (/yol çalışma|çalışma/.test(t)) { this.addHazard('work'); return say('Yol çalışması bildirildi'); }
+    if (/yol kapalı|kapalı yol/.test(t)) { this.addHazard('closed'); return say('Kapalı yol bildirildi'); }
+    if (/paylaş/.test(t)) { $('btn-share-pos')?.click(); return; }
+    if (/haritalarda aç|google|apple harita/.test(t)) return this.openExtMap();
+    if (/ayarlar/.test(t)) return A.sheet.open();
+    if (/sessiz|sesi kapat/.test(t)) { A.cfg.ttsOn = false; if ($('cfg-tts')) { $('cfg-tts').checked = false; $('cfg-tts').dispatchEvent(new Event('change')); } return toast('Sesli uyarı kapalı'); }
+    if (/sesi aç|sesli uyarı/.test(t)) { A.cfg.ttsOn = true; if ($('cfg-tts')) { $('cfg-tts').checked = true; $('cfg-tts').dispatchEvent(new Event('change')); } return say('Sesli uyarı açık'); }
+    if (/hud/.test(t)) { document.body.classList.add('hud-mode'); return; }
+    const m = t.replace(/['’]\w+/g, '').replace(/\b(git|götür|gidelim|yol tarifi|rota|navigasyon|başlat|bana|lütfen|ara|bul)\b/g, '').replace(/\s+/g, ' ').trim();
+    if (m.length > 2) {
+      A.destSheet.open(); const i = $('dest-q'); if (i) i.value = m; this.search(m, false); return say(m + ' aranıyor');
+    }
+    toast('Komut anlaşılamadı');
+  }
+}
+
+/* ═══════ Başlat ═══════ */
+(function boot() {
+  const go = () => { try { window.rotaApp = new AppManager(); } catch (e) { console.error(e); _killSplashNow(); } };
+  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', go) : go();
+})();
